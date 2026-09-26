@@ -147,6 +147,7 @@
     extra_added: "Added extra item",
     import: "Started a new stock check",
     reset_counts: "Reset all counts",
+    stock_deleted: "Deleted the stock check",
     export: "Exported results",
     staff_created: "Added staff member",
     staff_deactivated: "Switched off account",
@@ -156,6 +157,30 @@
     password_changed: "Changed own password",
     account_deleted: "Deleted own account"
   };
+
+  /* ---------------- stock check ---------------- */
+
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  // Admins: removes the product list, every count, the extra items and the
+  // stock check details, to start fresh. Staff accounts and the activity log stay.
+  async function deleteStockCheck() {
+    var counts = { products: 0, extras: 0 };
+    var cols = ["products", "extras"];
+    for (var c = 0; c < cols.length; c++) {
+      var snap = await db.collection(cols[c]).get();
+      counts[cols[c]] = snap.size;
+      // Firestore batches hold up to 500 writes
+      for (var i = 0; i < snap.docs.length; i += 400) {
+        var batch = db.batch();
+        snap.docs.slice(i, i + 400).forEach(function (d) { batch.delete(d.ref); });
+        await batch.commit();
+      }
+    }
+    await db.doc("meta/session").delete();
+    await log("stock_deleted", { detail: plural(counts.products, "product") + " \u00b7 " + plural(counts.extras, "extra item") });
+    return counts;
+  }
 
   /* ---------------- sessions ---------------- */
 
@@ -376,6 +401,8 @@
     resetPassword: resetPassword,
     setActive: setActive,
     setRole: setRole,
+    deleteStockCheck: deleteStockCheck,
+    plural: plural,
     changeOwnPassword: changeOwnPassword,
     deleteOwnAccount: deleteOwnAccount,
     log: log,

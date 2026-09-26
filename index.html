@@ -1201,8 +1201,11 @@
     exportBtn.addEventListener("click", exportResults);
     var resetBtn = el("button", { class: "btn btn-secondary", text: "Reset all counts to zero" });
     resetBtn.addEventListener("click", resetCounts);
+    var deleteBtn = el("button", { class: "btn btn-danger", text: "Delete stock check" });
+    deleteBtn.addEventListener("click", deleteStockCheck);
     btnRow.appendChild(exportBtn);
     btnRow.appendChild(resetBtn);
+    btnRow.appendChild(deleteBtn);
     toolsPanel.appendChild(btnRow);
     root.appendChild(toolsPanel);
   }
@@ -1388,6 +1391,26 @@
     });
     toast("Counts reset");
     SC.log("reset_counts", { detail: ids.length + " items" });
+  }
+
+  // Removes the list, counts, extra items and session to start fresh
+  async function deleteStockCheck() {
+    if (!state.dbApi) { toast("Not connected"); return; }
+    var nProducts = Object.keys(state.products).length, nExtras = Object.keys(state.extras).length;
+    if (!state.session && !nProducts && !nExtras) { toast("There's no stock check to delete"); return; }
+    var typed = window.prompt("This permanently deletes the product list (" + SC.plural(nProducts, "item") + "), all counts and " +
+      SC.plural(nExtras, "extra item") + ". Staff accounts and the activity log are kept.\n\nType DELETE to confirm:");
+    if (typed === null) return;
+    if (typed.trim().toUpperCase() !== "DELETE") { toast("Not deleted \u2014 you need to type DELETE"); return; }
+    toast("Deleting\u2026");
+    try {
+      var n = await SC.deleteStockCheck();
+      state.currentScan = null;
+      importState = null;
+      toast("Deleted " + SC.plural(n.products, "product") + " and " + SC.plural(n.extras, "extra item"));
+    } catch (e) {
+      toast("Couldn't delete: " + SC.friendlyError(e));
+    }
   }
 
   async function exportResults() {

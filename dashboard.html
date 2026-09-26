@@ -1035,7 +1035,7 @@
   function actionGroup(a) {
     if (a === "count_saved" || a === "extra_added") return "counts";
     if (a === "login" || a === "logout") return "sign";
-    if (a === "import" || a === "reset_counts" || a === "export") return "stock";
+    if (a === "import" || a === "reset_counts" || a === "export" || a === "stock_deleted") return "stock";
     return "staff";
   }
 
@@ -1237,7 +1237,8 @@
     ]));
     current.appendChild(el("div", { class: "toolbar", style: "margin:18px 0 0" }, [
       el("button", { class: "btn btn-secondary", type: "button", html: ICONS.download + " Export results", onclick: exportResults }),
-      el("button", { class: "btn btn-danger", type: "button", text: "Reset all counts", onclick: resetCounts })
+      el("button", { class: "btn btn-secondary", type: "button", text: "Reset all counts", onclick: resetCounts }),
+      el("button", { class: "btn btn-danger", type: "button", text: "Delete stock check", onclick: deleteStockModal })
     ]));
 
     var upload = el("div", { class: "card" }, [el("div", { class: "card-head" }, [el("div", {}, [
@@ -1341,6 +1342,26 @@
     });
     SC.log("reset_counts", { detail: ids.length + " items" });
     toast(failed ? failed + " items couldn't be reset" : "Counts reset");
+  }
+
+  function deleteStockModal() {
+    var st = stats();
+    if (!state.session && !Object.keys(state.products).length && !st.extras) { toast("There's no stock check to delete"); return; }
+    formModal({
+      title: "Delete stock check",
+      text: "This permanently deletes the product list (" + SC.plural(Object.keys(state.products).length, "item") + "), all counts and " +
+        SC.plural(st.extras, "extra item") + ", so you can start fresh. Staff accounts and the activity log are kept. Export the results first if you need them. Type DELETE to confirm.",
+      fields: [{ name: "confirm", label: "Type DELETE", autocomplete: "off" }],
+      submitLabel: "Delete stock check",
+      danger: true,
+      onSubmit: async function (v) {
+        if (v.confirm.trim().toUpperCase() !== "DELETE") throw new Error("Type DELETE to confirm.");
+        var n = await SC.deleteStockCheck();
+        state.currentScan = null;
+        state.importState = null;
+        toast("Deleted " + SC.plural(n.products, "product") + " and " + SC.plural(n.extras, "extra item"));
+      }
+    });
   }
 
   /* ---------------- modals & account ---------------- */
