@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  :root {
+    --bg: #EDEFF2;
+    --surface: #FFFFFF;
+    --surface-2: #E2E5EA;
+    --ink: #14171C;
+    --ink-dim: #676D78;
+    --border: #D4D8DE;
+    --accent: #E1550C;
+    --accent-2: #C4470A;
+    --accent-ink: #FFFFFF;
+    --good: #0F8F72;
+    --good-bg: #DCEFE9;
+    --bad: #C4392E;
+    --bad-bg: #FAE5E2;
+    --radius-lg: 22px;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 2px rgba(15,17,20,0.05), 0 10px 28px -14px rgba(15,17,20,0.22);
+    --shadow-lg: 0 2px 4px rgba(15,17,20,0.06), 0 20px 44px -18px rgba(15,17,20,0.3);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0C0D10;
+      --surface: #17191D;
+      --surface-2: #202226;
+      --ink: #EFEEEA;
+      --ink-dim: #8D9199;
+      --border: #2B2D32;
+      --accent: #FF7A2B;
+      --accent-2: #FF9552;
+      --accent-ink: #1A0D02;
+      --good: #38C99E;
+      --good-bg: #123329;
+      --bad: #FF6E60;
+      --bad-bg: #34201C;
+      --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 10px 28px -14px rgba(0,0,0,0.6);
+      --shadow-lg: 0 2px 4px rgba(0,0,0,0.4), 0 20px 44px -18px rgba(0,0,0,0.7);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0C0D10;
+    --surface: #17191D;
+    --surface-2: #202226;
+    --ink: #EFEEEA;
+    --ink-dim: #8D9199;
+    --border: #2B2D32;
+    --accent: #FF7A2B;
+    --accent-2: #FF9552;
+    --accent-ink: #1A0D02;
+    --good: #38C99E;
+    --good-bg: #123329;
+    --bad: #FF6E60;
+    --bad-bg: #34201C;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 10px 28px -14px rgba(0,0,0,0.6);
+    --shadow-lg: 0 2px 4px rgba(0,0,0,0.4), 0 20px 44px -18px rgba(0,0,0,0.7);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .display { font-family: "Space Grotesk", "Inter", sans-serif; }
+  button, select, input { font-family: inherit; }
+  svg.icon { width: 18px; height: 18px; flex-shrink: 0; }
+  #app { max-width: 720px; margin: 0 auto; padding: 0 14px 110px; }
+
+  header.top {
+    position: sticky; top: 0; top: env(safe-area-inset-top, 0px);
+    z-index: 30; background: var(--bg);
+    padding: 16px 14px 10px; margin: 0 -14px;
+  }
+  .brand { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .brand-mark { display: flex; align-items: center; gap: 9px; }
+  .brand-mark .glyph {
+    width: 34px; height: 34px; border-radius: 9px; background: var(--ink); color: var(--bg);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .brand h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0; font-family: "Space Grotesk", sans-serif; }
+  .brand .session-name { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+  .staff-chip {
+    font-size: 12px; color: var(--ink-dim); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 100px; padding: 6px 12px 6px 8px;
+    display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; box-shadow: var(--shadow);
+  }
+  .staff-chip svg { color: var(--accent); }
+  .staff-chip b { color: var(--ink); font-weight: 600; }
+
+  .progress-wrap { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .progress-track {
+    flex: 1; height: 10px; border-radius: 6px; background: var(--surface-2); overflow: hidden; position: relative;
+    background-image: repeating-linear-gradient(90deg, var(--border) 0 1px, transparent 1px 10%);
+  }
+  .progress-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .4s cubic-bezier(.4,0,.2,1); }
+  .progress-pct { font-size: 16px; font-weight: 700; white-space: nowrap; min-width: 3.2em; text-align: right; }
+  .progress-label { font-size: 11.5px; color: var(--ink-dim); margin-top: 5px; }
+
+  nav.tabs { display: flex; gap: 4px; margin-top: 14px; background: var(--surface-2); border-radius: 11px; padding: 3px; }
+  nav.tabs button {
+    flex: 1; padding: 8px 4px; border-radius: 8px; border: none;
+    background: transparent; color: var(--ink-dim); font-size: 12.5px; font-weight: 600; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  nav.tabs button svg { width: 17px; height: 17px; }
+  nav.tabs button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+  nav.tabs button.active svg { color: var(--accent); }
+
+  main { padding-top: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; box-shadow: var(--shadow); }
+  .panel h2 { font-size: 13.5px; margin: 0 0 3px; font-weight: 700; font-family: "Space Grotesk", sans-serif; }
+  .panel .hint { font-size: 12.5px; color: var(--ink-dim); margin: 0 0 12px; line-height: 1.5; }
+
+  .scan-hero {
+    position: relative; overflow: hidden; border-radius: var(--radius-lg);
+    background: var(--ink); color: #fff; padding: 20px 18px 22px; margin-bottom: 14px; box-shadow: var(--shadow-lg);
+  }
+  .scan-hero::before {
+    content: ""; position: absolute; inset: 0; opacity: .5;
+    background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.09) 0 3px, transparent 3px 7px, rgba(255,255,255,.05) 7px 8px, transparent 8px 14px);
+  }
+  .scan-hero .laser {
+    position: absolute; left: 0; right: 0; height: 2px; top: 0;
+    background: linear-gradient(90deg, transparent, var(--accent-2) 20%, #fff 50%, var(--accent-2) 80%, transparent);
+    box-shadow: 0 0 12px 2px var(--accent); opacity: .85;
+    animation: laserSweep 2.6s ease-in-out infinite;
+  }
+  @keyframes laserSweep { 0% { top: 6%; } 50% { top: 92%; } 100% { top: 6%; } }
+  @media (prefers-reduced-motion: reduce) { .scan-hero .laser { animation: none; top: 50%; } }
+  .scan-hero h2 { position: relative; font-size: 13px; font-weight: 600; color: rgba(255,255,255,.75); margin: 0 0 2px; text-transform: none; }
+  .scan-hero p.hint { position: relative; font-size: 12px; color: rgba(255,255,255,.55); margin: 0 0 14px; }
+  .scan-form { position: relative; display: flex; gap: 8px; }
+  .scan-form input {
+    flex: 1; min-width: 0; padding: 15px 16px; font-size: 17px; border-radius: var(--radius-sm);
+    border: 1.5px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: #fff;
+    font-family: "IBM Plex Mono", monospace; letter-spacing: .02em;
+  }
+  .scan-form input::placeholder { color: rgba(255,255,255,.4); font-family: "Inter", sans-serif; letter-spacing: normal; }
+  .scan-form input:focus { outline: none; border-color: var(--accent); background: rgba(255,255,255,.12); }
+  .icon-btn {
+    width: 50px; flex-shrink: 0; border-radius: var(--radius-sm); border: 1.5px solid rgba(255,255,255,.18);
+    background: var(--accent); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 0 var(--accent-2); transition: transform .08s ease, box-shadow .08s ease;
+  }
+  .icon-btn:active { transform: translateY(3px); box-shadow: 0 0 0 var(--accent-2); }
+
+  .btn {
+    padding: 12px 16px; border-radius: var(--radius-sm); border: 1.5px solid transparent; font-size: 14px;
+    font-weight: 600; cursor: pointer; transition: transform .08s ease, box-shadow .08s ease;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 3px 0 var(--accent-2); }
+  .btn-primary:active { transform: translateY(3px); box-shadow: 0 0 0 var(--accent-2); }
+  .btn-primary:disabled { opacity: .5; cursor: default; box-shadow: none; transform: none; }
+  .btn-secondary { background: var(--surface-2); color: var(--ink); border-color: var(--border); }
+  .btn-secondary:active { transform: translateY(1px); }
+  .btn-danger { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .btn-block { width: 100%; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-row .btn { flex: 1; min-width: 140px; }
+
+  .scanned-card { position: relative; margin-top: 14px; padding: 14px 14px 14px 18px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+  .scanned-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--ink-dim); }
+  .scanned-card.found::before { background: var(--good); }
+  .scanned-card.unknown::before { background: var(--accent); }
+  .scanned-card.extra::before { background: var(--accent); }
+  .sc-top-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .scanned-card .sc-barcode { font-size: 12px; color: var(--ink-dim); }
+  .badge { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 100px; text-transform: uppercase; letter-spacing: .04em; }
+  .badge-extra { background: var(--accent); color: var(--accent-ink); }
+  .scanned-card .sc-desc { font-size: 17px; font-weight: 700; margin: 4px 0 14px; line-height: 1.3; font-family: "Space Grotesk", sans-serif; }
+  .qty-row { display: flex; align-items: center; gap: 10px; }
+  .qty-row button { width: 46px; height: 46px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 20px; cursor: pointer; }
+  .qty-row button:active { background: var(--surface-2); }
+  .qty-row input { flex: 1; text-align: center; font-size: 24px; font-weight: 700; padding: 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", monospace; }
+  .qty-row input:focus { outline: none; border-color: var(--accent); }
+  .save-row { display: flex; gap: 8px; margin-top: 12px; }
+  .unknown-msg { font-size: 13px; color: var(--ink-dim); margin-bottom: 10px; }
+  .extra-desc-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 14px; margin-bottom: 10px; }
+  .last-counted { font-size: 12px; color: var(--ink-dim); margin-top: 10px; }
+
+  .filter-row { display: flex; gap: 6px; margin-bottom: 10px; }
+  .filter-row button { flex: 1; padding: 8px 4px; font-size: 12.5px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-dim); cursor: pointer; font-weight: 600; }
+  .filter-row button.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .search-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 14px; margin-bottom: 10px; }
+  .search-input:focus { outline: none; border-color: var(--accent); }
+
+  .item-row { display: flex; align-items: center; gap: 11px; padding: 11px 8px 11px 10px; border-left: 3px solid var(--border); border-bottom: 1px solid var(--border); cursor: pointer; margin-bottom: 2px; }
+  .item-row:last-child { border-bottom: none; margin-bottom: 0; }
+  .item-row.counted { border-left-color: var(--good); }
+  .item-row .info { flex: 1; min-width: 0; }
+  .item-row .desc { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-row .code { font-size: 11px; color: var(--ink-dim); }
+  .item-row .status-pill { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 100px; white-space: nowrap; }
+  .item-row.counted .status-pill { background: var(--good-bg); color: var(--good); }
+  .item-row:not(.counted) .status-pill { background: var(--surface-2); color: var(--ink-dim); }
+  .item-row .qty { font-size: 15px; font-weight: 700; font-family: "IBM Plex Mono", monospace; min-width: 26px; text-align: right; }
+  .item-row .qty.dash { color: var(--ink-dim); font-weight: 400; }
+  .empty-note { text-align: center; padding: 34px 10px; color: var(--ink-dim); font-size: 13.5px; }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-dim); margin-bottom: 5px; }
+  .field select, .field input[type=text] { width: 100%; padding: 10px 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 14px; }
+
+  table.preview { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.preview th, table.preview td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.preview th { color: var(--ink-dim); font-weight: 600; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px; }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: 12px 14px; border-left: 3px solid var(--accent); }
+  .stat .n { font-size: 22px; font-weight: 700; font-family: "Space Grotesk", sans-serif; }
+  .stat .l { font-size: 11px; color: var(--ink-dim); }
+
+  .toast {
+    position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--bg); padding: 11px 20px; border-radius: 100px; font-size: 13px;
+    font-weight: 600; z-index: 100; box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .25s ease;
+    max-width: 90vw; text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .modal { background: var(--surface); border-radius: 18px; padding: 18px; max-width: 380px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+  .modal h3 { margin: 0 0 8px; font-size: 15px; font-family: "Space Grotesk", sans-serif; }
+  .modal p { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .cam-wrap { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; aspect-ratio: 1; margin-bottom: 12px; }
+  .cam-wrap video { width: 100%; height: 100%; object-fit: cover; }
+  .cam-wrap .corner { position: absolute; width: 26px; height: 26px; border: 3px solid var(--accent); }
+  .cam-wrap .corner.tl { top: 16%; left: 16%; border-right: none; border-bottom: none; border-radius: 6px 0 0 0; }
+  .cam-wrap .corner.tr { top: 16%; right: 16%; border-left: none; border-bottom: none; border-radius: 0 6px 0 0; }
+  .cam-wrap .corner.bl { bottom: 16%; left: 16%; border-right: none; border-top: none; border-radius: 0 0 0 6px; }
+  .cam-wrap .corner.br { bottom: 16%; right: 16%; border-left: none; border-top: none; border-radius: 0 0 6px 0; }
+
+  .banner { padding: 11px 12px; border-radius: var(--radius-sm); font-size: 12.5px; margin-bottom: 12px; line-height: 1.5; border-left: 3px solid var(--accent); background: var(--surface-2); }
+  .banner.warn { background: var(--surface-2); color: var(--ink); }
+  .banner.err { background: var(--bad-bg); color: var(--bad); border-left-color: var(--bad); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand">
+      <div class="brand-mark">
+        <div class="glyph">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>
+        </div>
+        <div>
+          <h1>Stock check</h1>
+          <div class="session-name" id="sessionName">Loading&hellip;</div>
+        </div>
+      </div>
+      <div class="staff-chip" id="staffChip" title="Tap to change your name">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <b id="staffNameLabel">&hellip;</b>
+      </div>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      <div class="progress-pct display" id="progressPct">0%</div>
+    </div>
+    <div class="progress-label" id="progressLabel">0 of 0 counted</div>
+    <nav class="tabs">
+      <button data-tab="scan" class="active">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>
+        Scan
+      </button>
+      <button data-tab="list">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        Item list
+      </button>
+      <button data-tab="manage">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h4M12 6h8M4 12h11M19 12h1M4 18h6M14 18h6"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg>
+        Manage
+      </button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-scan"></section>
+    <section id="tab-list" style="display:none"></section>
+    <section id="tab-manage" style="display:none"></section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="modalRoot"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------------------------------------------------------
+   * State
+   * ------------------------------------------------------------- */
+  var state = {
+    dbApi: null,
+    downloadsApi: null,
+    userApi: null,
+    staffName: "",
+    session: null,          // meta/session doc data
+    products: {},           // id -> product data (from live query, capped at 1000)
+    productsLoaded: false,
+    extras: {},             // id -> extra item data
+    activeTab: "scan",
+    currentScan: null,      // { id, barcode, existing product|extra or null }
+    listFilter: "all",      // all | counted | pending
+    listSearch: "",
+  };
+
+  var MAX_PRODUCTS = 1000;
+
+  /* ---------------------------------------------------------------
+   * Small utilities
+   * ------------------------------------------------------------- */
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === "text") e.textContent = attrs[k];
+      else if (k === "html") e.innerHTML = attrs[k];
+      else if (k.indexOf("on") === 0 && typeof attrs[k] === "function") e.addEventListener(k.slice(2), attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    }
+    (children || []).forEach(function (c) { if (c) e.appendChild(c); });
+    return e;
+  }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function sanitizeId(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    s = s.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
+    if (s.length > 190) s = s.slice(0, 190);
+    if (!s) s = "item_" + Math.random().toString(36).slice(2, 10);
+    return s;
+  }
+  function nowIso() { return new Date().toISOString(); }
+  function fmtWhen(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso);
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+        d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    } catch (e) { return ""; }
+  }
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2200);
+  }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  async function withConcurrency(items, limit, fn) {
+    var results = [];
+    var i = 0;
+    async function worker() {
+      while (i < items.length) {
+        var idx = i++;
+        try { results[idx] = await fn(items[idx], idx); }
+        catch (e) { results[idx] = { __error: e }; }
+      }
+    }
+    var workers = [];
+    for (var w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
+    await Promise.all(workers);
+    return results;
+  }
+
+  /* ---------------------------------------------------------------
+   * Claude capabilities
+   * ------------------------------------------------------------- */
+  async function initCapabilities() {
+    try {
+      if (window.claude && window.claude.use) {
+        state.dbApi = await window.claude.use("db");
+        state.downloadsApi = await window.claude.use("downloads");
+        state.userApi = await window.claude.use("user");
+      }
+    } catch (e) { /* design for absence */ }
+
+    if (!state.dbApi) {
+      $("#sessionName").textContent = "Live sync unavailable in this view";
+      var b = el("div", { class: "banner err" }, [
+        document.createTextNode("This view can't reach the shared database, so counts won't sync between devices. Open this page from claude.ai to enable shared syncing.")
+      ]);
+      $("#app").insertBefore(b, $("main"));
+    }
+  }
+
+  async function resolveStaffName() {
+    var override = lsGet("stockcheck_name");
+    if (override) { state.staffName = override; renderStaffChip(); return; }
+    if (state.userApi) {
+      try {
+        var id = await state.userApi.id();
+        if (id) {
+          var profiles = await state.userApi.profiles([id]);
+          var name = profiles && profiles[id] && profiles[id].name;
+          if (name) { state.staffName = name; renderStaffChip(); return; }
+        }
+      } catch (e) {}
+    }
+    state.staffName = "Staff";
+    renderStaffChip();
+  }
+  function renderStaffChip() {
+    $("#staffNameLabel").textContent = state.staffName || "Set name";
+  }
+  function promptStaffName() {
+    var current = state.staffName === "Staff" ? "" : state.staffName;
+    var name = window.prompt("Your name (shown next to counts you save):", current || "");
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return;
+    lsSet("stockcheck_name", name);
+    state.staffName = name;
+    renderStaffChip();
+    toast("Name set to " + name);
+  }
+
+  /* ---------------------------------------------------------------
+   * DB subscriptions
+   * ------------------------------------------------------------- */
+  function subscribeSession() {
+    if (!state.dbApi) return;
+    state.dbApi.doc("meta/session").onSnapshot(function (snap) {
+      state.session = snap.exists ? snap.data() : null;
+      renderHeader();
+      renderManageStatus();
+    }, function (err) {
+      console.warn("session snapshot error", err);
+    });
+  }
+
+  function subscribeProducts() {
+    if (!state.dbApi) return;
+    state.dbApi.collection("products").orderBy("barcode").limit(MAX_PRODUCTS).onSnapshot(function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+      state.products = map;
+      state.productsLoaded = true;
+      renderHeader();
+      if (state.activeTab === "list") renderListTab();
+      if (state.activeTab === "manage") renderManageStatus();
+    }, function (err) {
+      console.warn("products snapshot error", err);
+    });
+  }
+
+  function subscribeExtras() {
+    if (!state.dbApi) return;
+    state.dbApi.collection("extras").limit(500).onSnapshot(function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+      state.extras = map;
+      if (state.activeTab === "list") renderListTab();
+    }, function (err) {
+      console.warn("extras snapshot error", err);
+    });
+  }
+
+  /* ---------------------------------------------------------------
+   * Header / progress
+   * ------------------------------------------------------------- */
+  function renderHeader() {
+    var s = state.session;
+    if (!s) {
+      $("#sessionName").textContent = state.dbApi ? "No product list yet \u2014 go to Manage to upload one" : $("#sessionName").textContent;
+    } else {
+      $("#sessionName").textContent = (s.name || "Stock check") + (s.startedAt ? " \u2014 started " + fmtWhen(s.startedAt) : "");
+    }
+    var total = s ? (s.totalProducts || 0) : 0;
+    var ids = Object.keys(state.products);
+    var countedLoaded = ids.filter(function (id) { return isCounted(state.products[id]); }).length;
+    var denom = total || ids.length;
+    var pct = denom ? Math.round((countedLoaded / denom) * 100) : 0;
+    $("#progressFill").style.width = pct + "%";
+    $("#progressPct").textContent = pct + "%";
+    var label = countedLoaded + " of " + (denom || 0) + " counted";
+    if (total > MAX_PRODUCTS) label += " (first " + MAX_PRODUCTS + " shown)";
+    $("#progressLabel").textContent = label;
+  }
+  function isCounted(p) { return p && p.countedQty !== null && p.countedQty !== undefined; }
+
+  /* ---------------------------------------------------------------
+   * Tabs
+   * ------------------------------------------------------------- */
+  function switchTab(tab) {
+    state.activeTab = tab;
+    $all("nav.tabs button").forEach(function (b) { b.classList.toggle("active", b.dataset.tab === tab); });
+    $all("main > section").forEach(function (s) { s.style.display = "none"; });
+    $("#tab-" + tab).style.display = "block";
+    if (tab === "scan") renderScanTab();
+    if (tab === "list") renderListTab();
+    if (tab === "manage") renderManageTab();
+  }
+
+  /* ---------------------------------------------------------------
+   * SCAN TAB
+   * ------------------------------------------------------------- */
+  function renderScanTab() {
+    var root = $("#tab-scan");
+    root.innerHTML = "";
+    var hero = el("div", { class: "scan-hero" });
+    hero.appendChild(el("div", { class: "laser" }));
+    hero.appendChild(el("h2", { text: "Scan or enter a barcode" }));
+    hero.appendChild(el("p", { class: "hint", text: "Handheld scanners type straight into the field. Or use the camera, or type the code and press enter." }));
+    var form = el("form", { class: "scan-form" });
+    var input = el("input", { type: "text", inputmode: "numeric", autocomplete: "off", placeholder: "Barcode", id: "scanInput" });
+    var camBtn = el("button", { type: "button", class: "icon-btn", title: "Scan with camera" });
+    camBtn.appendChild(cameraIcon());
+    form.appendChild(input);
+    form.appendChild(camBtn);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      handleScan(input.value);
+    });
+    camBtn.addEventListener("click", openCameraScanner);
+    hero.appendChild(form);
+    root.appendChild(hero);
+
+    var scannedHolder = el("div", { id: "scannedHolder" });
+    root.appendChild(scannedHolder);
+
+    if (state.currentScan) renderScannedCard();
+
+    setTimeout(function () { var i = $("#scanInput"); if (i) i.focus(); }, 50);
+  }
+
+  function cameraIcon() {
+    var wrap = el("div");
+    wrap.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+    return wrap.firstChild;
+  }
+
+  async function handleScan(rawCode) {
+    var code = (rawCode || "").trim();
+    if (!code) return;
+    var id = sanitizeId(code);
+    var input = $("#scanInput");
+    if (input) { input.value = ""; input.focus(); }
+
+    var product = state.products[id];
+    var extra = state.extras[id];
+
+    if (!product && !extra && state.dbApi) {
+      // fall back to a direct lookup in case the local cache doesn't include it
+      try {
+        var snap = await state.dbApi.doc("products/" + id).get();
+        if (snap.exists) product = snap.data();
+        else {
+          var esnap = await state.dbApi.doc("extras/" + id).get();
+          if (esnap.exists) extra = esnap.data();
+        }
+      } catch (e) {}
+    }
+
+    state.currentScan = { id: id, barcode: code, product: product || null, extra: extra || null };
+    renderScannedCard();
+  }
+
+  function renderScannedCard() {
+    var holder = $("#scannedHolder");
+    if (!holder) return;
+    holder.innerHTML = "";
+    var sc = state.currentScan;
+    if (!sc) return;
+
+    if (sc.product) {
+      var p = sc.product;
+      var card = el("div", { class: "scanned-card found" });
+      card.appendChild(el("div", { class: "sc-barcode mono", text: sc.barcode }));
+      card.appendChild(el("div", { class: "sc-desc", text: p.description || "(no description)" }));
+      var qtyRow = buildQtyRow(isCounted(p) ? p.countedQty : "");
+      card.appendChild(qtyRow.row);
+      var saveRow = el("div", { class: "save-row" });
+      var saveBtn = el("button", { class: "btn btn-primary btn-block", text: "Save count" });
+      saveBtn.addEventListener("click", function () { saveProductCount(sc.id, qtyRow.getValue()); });
+      saveRow.appendChild(saveBtn);
+      card.appendChild(saveRow);
+      if (p.updatedBy) {
+        card.appendChild(el("div", { class: "last-counted", text: "Last counted by " + p.updatedBy + (p.updatedAt ? " on " + fmtWhen(p.updatedAt) : "") }));
+      }
+      holder.appendChild(card);
+    } else if (sc.extra) {
+      var ex = sc.extra;
+      var card2 = el("div", { class: "scanned-card extra" });
+      var topRow2 = el("div", { class: "sc-top-row" }, [
+        el("div", { class: "sc-barcode mono", text: sc.barcode }),
+        el("span", { class: "badge badge-extra", text: "Extra item" })
+      ]);
+      card2.appendChild(topRow2);
+      card2.appendChild(el("div", { class: "sc-desc", text: ex.description || "(no description)" }));
+      var qtyRow2 = buildQtyRow(ex.qty != null ? ex.qty : "");
+      card2.appendChild(qtyRow2.row);
+      var saveRow2 = el("div", { class: "save-row" });
+      var saveBtn2 = el("button", { class: "btn btn-primary btn-block", text: "Update count" });
+      saveBtn2.addEventListener("click", function () { saveExtra(sc.id, sc.barcode, ex.description, qtyRow2.getValue()); });
+      saveRow2.appendChild(saveBtn2);
+      card2.appendChild(saveRow2);
+      holder.appendChild(card2);
+    } else {
+      var card3 = el("div", { class: "scanned-card unknown" });
+      card3.appendChild(el("div", { class: "sc-barcode mono", text: sc.barcode }));
+      card3.appendChild(el("div", { class: "unknown-msg", text: "Not on the product list. Add it as an extra item found in stock." }));
+      var descInput = el("input", { type: "text", class: "extra-desc-input", placeholder: "Description of this item" });
+      card3.appendChild(descInput);
+      var qtyRow3 = buildQtyRow("");
+      card3.appendChild(qtyRow3.row);
+      var saveRow3 = el("div", { class: "save-row" });
+      var saveBtn3 = el("button", { class: "btn btn-primary btn-block", text: "Add extra item" });
+      saveBtn3.addEventListener("click", function () {
+        var desc = descInput.value.trim();
+        if (!desc) { toast("Enter a description first"); return; }
+        saveExtra(sc.id, sc.barcode, desc, qtyRow3.getValue());
+      });
+      saveRow3.appendChild(saveBtn3);
+      card3.appendChild(saveRow3);
+      holder.appendChild(card3);
+    }
+  }
+
+  function buildQtyRow(initial) {
+    var row = el("div", { class: "qty-row" });
+    var minus = el("button", { type: "button", text: "\u2212" });
+    var input = el("input", { type: "number", inputmode: "numeric", min: "0", value: initial === "" ? "" : String(initial) });
+    var plus = el("button", { type: "button", text: "+" });
+    minus.addEventListener("click", function () {
+      var v = parseInt(input.value, 10); if (isNaN(v)) v = 0; v = Math.max(0, v - 1); input.value = v;
+    });
+    plus.addEventListener("click", function () {
+      var v = parseInt(input.value, 10); if (isNaN(v)) v = 0; v = v + 1; input.value = v;
+    });
+    row.appendChild(minus); row.appendChild(input); row.appendChild(plus);
+    return { row: row, getValue: function () {
+      var v = parseInt(input.value, 10);
+      return isNaN(v) ? 0 : v;
+    } };
+  }
+
+  async function saveProductCount(id, qty) {
+    if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
+    try {
+      await state.dbApi.doc("products/" + id).update({
+        countedQty: qty, updatedBy: state.staffName || "Staff", updatedAt: nowIso()
+      });
+      toast("Saved: " + qty);
+    } catch (e) {
+      toast("Couldn't save: " + (e && e.code ? e.code : "error"));
+    }
+  }
+
+  async function saveExtra(id, barcode, description, qty) {
+    if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
+    try {
+      await state.dbApi.doc("extras/" + id).set({
+        barcode: barcode, description: description, qty: qty,
+        addedBy: state.staffName || "Staff", addedAt: nowIso()
+      });
+      toast("Saved: " + qty);
+    } catch (e) {
+      toast("Couldn't save: " + (e && e.code ? e.code : "error"));
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * Camera scanning (ZXing) - optional, degrades gracefully
+   * ------------------------------------------------------------- */
+  var zxingReader = null;
+  var zxingStream = null;
+  function openCameraScanner() {
+    if (typeof ZXing === "undefined") {
+      toast("Camera scanning isn't available here \u2014 type the barcode instead");
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast("This browser can't offer camera access here \u2014 type the barcode instead");
+      return;
+    }
+    var overlay = el("div", { class: "modal-overlay", id: "camOverlay" });
+    var modal = el("div", { class: "modal" });
+    modal.appendChild(el("h3", { text: "Scan a barcode" }));
+    var camWrap = el("div", { class: "cam-wrap" });
+    var video = el("video");
+    video.setAttribute("autoplay", "");
+    video.setAttribute("playsinline", "");
+    video.muted = true;
+    video.playsInline = true;
+    camWrap.appendChild(video);
+    camWrap.appendChild(el("div", { class: "corner tl" }));
+    camWrap.appendChild(el("div", { class: "corner tr" }));
+    camWrap.appendChild(el("div", { class: "corner bl" }));
+    camWrap.appendChild(el("div", { class: "corner br" }));
+    modal.appendChild(camWrap);
+    var status = el("p", { text: "Requesting camera access\u2026" });
+    modal.appendChild(status);
+    var retryRow = el("div", { class: "btn-row", style: "margin-bottom:8px", id: "camRetryRow" });
+    modal.appendChild(retryRow);
+    var closeBtn = el("button", { class: "btn btn-secondary btn-block", text: "Cancel" });
+    closeBtn.addEventListener("click", closeCameraScanner);
+    modal.appendChild(closeBtn);
+    overlay.appendChild(modal);
+    $("#modalRoot").appendChild(overlay);
+
+    function tryStart(constraints, label) {
+      try {
+        zxingReader = new ZXing.BrowserMultiFormatReader();
+        zxingReader.decodeFromConstraints(
+          constraints,
+          video,
+          function (result) {
+            if (result) {
+              var text = result.getText();
+              closeCameraScanner();
+              handleScan(text);
+            }
+          }
+        ).then(function (controls) {
+          status.textContent = "Point your camera at a barcode";
+          retryRow.innerHTML = "";
+          zxingStream = controls;
+        }).catch(function (e) {
+          handleCamError(e, label);
+        });
+      } catch (e) {
+        handleCamError(e, label);
+      }
+    }
+
+    function handleCamError(e, label) {
+      var name = (e && e.name) || "Error";
+      retryRow.innerHTML = "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        status.textContent = "Camera access was blocked (" + name + "). If your browser or app just asked for permission, allow it and try again \u2014 otherwise check camera permissions in your browser or device settings.";
+        var retryBtn = el("button", { class: "btn btn-primary", text: "Try again" });
+        retryBtn.addEventListener("click", function () { tryStart({ video: { facingMode: { ideal: "environment" } } }, "environment"); });
+        retryRow.appendChild(retryBtn);
+      } else if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+        status.textContent = "That camera isn't available. Trying another camera\u2026";
+        tryStart({ video: true }, "any");
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        status.textContent = "No camera was found on this device.";
+      } else {
+        status.textContent = "Couldn't access the camera (" + name + "). You can type the barcode instead.";
+      }
+    }
+
+    tryStart({ video: { facingMode: { ideal: "environment" } } }, "environment");
+  }
+  function closeCameraScanner() {
+    try { if (zxingReader) zxingReader.reset(); } catch (e) {}
+    zxingReader = null; zxingStream = null;
+    var o = $("#camOverlay");
+    if (o) o.remove();
+  }
+
+  /* ---------------------------------------------------------------
+   * LIST TAB
+   * ------------------------------------------------------------- */
+  function renderListTab() {
+    var root = $("#tab-list");
+    root.innerHTML = "";
+    var panel = el("div", { class: "panel" });
+    panel.appendChild(el("h2", { text: "All items" }));
+
+    if (state.session && state.session.totalProducts > MAX_PRODUCTS) {
+      panel.appendChild(el("div", { class: "banner warn", text: "This list has more than " + MAX_PRODUCTS + " products. Showing the first " + MAX_PRODUCTS + " \u2014 scanning still works for every item." }));
+    }
+
+    var search = el("input", { class: "search-input", type: "text", placeholder: "Search by barcode or description", value: state.listSearch });
+    search.addEventListener("input", function () { state.listSearch = search.value; renderListRows(); });
+    panel.appendChild(search);
+
+    var filterRow = el("div", { class: "filter-row" });
+    [["all", "All"], ["pending", "Not counted"], ["counted", "Counted"]].forEach(function (f) {
+      var b = el("button", { text: f[1] });
+      if (state.listFilter === f[0]) b.classList.add("active");
+      b.addEventListener("click", function () { state.listFilter = f[0]; renderListTab(); });
+      filterRow.appendChild(b);
+    });
+    panel.appendChild(filterRow);
+
+    var listHolder = el("div", { id: "listHolder" });
+    panel.appendChild(listHolder);
+    root.appendChild(panel);
+    renderListRows();
+  }
+
+  function renderListRows() {
+    var holder = $("#listHolder");
+    if (!holder) return;
+    holder.innerHTML = "";
+    var q = state.listSearch.trim().toLowerCase();
+
+    var rows = Object.keys(state.products).map(function (id) {
+      var p = state.products[id];
+      return { id: id, barcode: p.barcode || id, description: p.description || "", counted: isCounted(p), qty: p.countedQty };
+    });
+
+    rows = rows.filter(function (r) {
+      if (state.listFilter === "counted" && !r.counted) return false;
+      if (state.listFilter === "pending" && r.counted) return false;
+      if (q && r.barcode.toLowerCase().indexOf(q) === -1 && r.description.toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+
+    if (!rows.length) {
+      holder.appendChild(el("div", { class: "empty-note", text: state.productsLoaded ? "No items match." : "No product list yet." }));
+      return;
+    }
+
+    rows.forEach(function (r) {
+      var row = el("div", { class: "item-row" + (r.counted ? " counted" : "") });
+      var info = el("div", { class: "info" });
+      info.appendChild(el("div", { class: "desc", text: r.description || "(no description)" }));
+      info.appendChild(el("div", { class: "code mono", text: r.barcode }));
+      row.appendChild(info);
+      row.appendChild(el("span", { class: "status-pill", text: r.counted ? "Counted" : "Pending" }));
+      row.appendChild(el("div", { class: "qty" + (r.counted ? "" : " dash"), text: r.counted ? String(r.qty) : "\u2014" }));
+      row.addEventListener("click", function () {
+        switchTab("scan");
+        handleScan(r.barcode);
+      });
+      holder.appendChild(row);
+    });
+
+    var extraRows = Object.keys(state.extras);
+    if (extraRows.length && state.listFilter !== "pending" && !q) {
+      holder.appendChild(el("div", { class: "hint", style: "margin:14px 0 4px", text: "Extra items found (not on original list)" }));
+      extraRows.forEach(function (id) {
+        var ex = state.extras[id];
+        var row = el("div", { class: "item-row counted" });
+        var info = el("div", { class: "info" });
+        info.appendChild(el("div", { class: "desc", text: ex.description || "" }));
+        info.appendChild(el("div", { class: "code mono", text: ex.barcode || id }));
+        row.appendChild(info);
+        row.appendChild(el("span", { class: "badge badge-extra", text: "Extra" }));
+        row.appendChild(el("div", { class: "qty", text: String(ex.qty) }));
+        row.addEventListener("click", function () { switchTab("scan"); handleScan(ex.barcode || id); });
+        holder.appendChild(row);
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * MANAGE TAB
+   * ------------------------------------------------------------- */
+  var importState = null; // { rows: [[..]], headerRow: [..], barcodeCol, descCol, fileName }
+
+  function renderManageTab() {
+    var root = $("#tab-manage");
+    root.innerHTML = "";
+
+    var statusPanel = el("div", { class: "panel", id: "manageStatusPanel" });
+    root.appendChild(statusPanel);
+    renderManageStatus();
+
+    var uploadPanel = el("div", { class: "panel" });
+    uploadPanel.appendChild(el("h2", { text: "Upload product list" }));
+    uploadPanel.appendChild(el("p", { class: "hint", text: "An Excel file with a barcode column and a description column. Starting a new stock check replaces the current list and clears existing counts \u2014 export first if you need to keep them. Tip: format the barcode column as text in Excel to keep any leading zeros." }));
+    var fileInput = el("input", { type: "file", accept: ".xlsx,.xls,.csv" });
+    fileInput.addEventListener("change", function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) handleFileSelected(f);
+    });
+    uploadPanel.appendChild(fileInput);
+    var mapHolder = el("div", { id: "importMapHolder", style: "margin-top:12px" });
+    uploadPanel.appendChild(mapHolder);
+    root.appendChild(uploadPanel);
+
+    var toolsPanel = el("div", { class: "panel" });
+    toolsPanel.appendChild(el("h2", { text: "Tools" }));
+    var btnRow = el("div", { class: "btn-row" });
+    var exportBtn = el("button", { class: "btn btn-secondary", text: "Export results (.xlsx)" });
+    exportBtn.addEventListener("click", exportResults);
+    var resetBtn = el("button", { class: "btn btn-secondary", text: "Reset all counts to zero" });
+    resetBtn.addEventListener("click", resetCounts);
+    btnRow.appendChild(exportBtn);
+    btnRow.appendChild(resetBtn);
+    toolsPanel.appendChild(btnRow);
+    root.appendChild(toolsPanel);
+  }
+
+  function renderManageStatus() {
+    var panel = $("#manageStatusPanel");
+    if (!panel) return;
+    panel.innerHTML = "";
+    panel.appendChild(el("h2", { text: "Current stock check" }));
+    var s = state.session;
+    var ids = Object.keys(state.products);
+    var counted = ids.filter(function (id) { return isCounted(state.products[id]); }).length;
+    var grid = el("div", { class: "stat-grid" });
+    grid.appendChild(el("div", { class: "stat" }, [
+      el("div", { class: "n", text: String((s && s.totalProducts) || ids.length || 0) }),
+      el("div", { class: "l", text: "products in list" })
+    ]));
+    grid.appendChild(el("div", { class: "stat" }, [
+      el("div", { class: "n", text: String(counted) }),
+      el("div", { class: "l", text: "counted so far" })
+    ]));
+    panel.appendChild(grid);
+    if (s) {
+      panel.appendChild(el("p", { class: "hint", text: (s.sourceFileName ? "From " + s.sourceFileName + ". " : "") + "Started " + fmtWhen(s.startedAt) + (s.startedBy ? " by " + s.startedBy : "") + "." }));
+    } else {
+      panel.appendChild(el("p", { class: "hint", text: "No product list uploaded yet." }));
+    }
+  }
+
+  function handleFileSelected(file) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var data = new Uint8Array(e.target.result);
+        var wb = XLSX.read(data, { type: "array" });
+        var sheet = wb.Sheets[wb.SheetNames[0]];
+        var rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+        rows = rows.filter(function (r) { return r.some(function (c) { return String(c).trim() !== ""; }); });
+        if (!rows.length) { toast("That file looks empty"); return; }
+        var headerRow = rows[0];
+        var dataRows = rows.slice(1);
+        var guess = guessColumns(headerRow);
+        importState = { rows: dataRows, headerRow: headerRow, barcodeCol: guess.barcodeCol, descCol: guess.descCol, fileName: file.name };
+        renderImportMap();
+      } catch (err) {
+        toast("Couldn't read that file");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function guessColumns(headerRow) {
+    var barcodeRe = /barcode|bar code|code|sku|ean|upc/i;
+    var descRe = /desc|name|item|product|title/i;
+    var barcodeCol = 0, descCol = headerRow.length > 1 ? 1 : 0;
+    headerRow.forEach(function (h, i) { if (barcodeRe.test(String(h))) barcodeCol = i; });
+    headerRow.forEach(function (h, i) { if (descRe.test(String(h))) descCol = i; });
+    return { barcodeCol: barcodeCol, descCol: descCol };
+  }
+
+  function renderImportMap() {
+    var holder = $("#importMapHolder");
+    holder.innerHTML = "";
+    if (!importState) return;
+
+    var over = importState.rows.length > MAX_PRODUCTS;
+    if (over) {
+      holder.appendChild(el("div", { class: "banner warn", text: "This file has " + importState.rows.length + " rows. Only the first " + MAX_PRODUCTS + " will be imported." }));
+    }
+
+    var colOptions = importState.headerRow.map(function (h, i) { return { i: i, label: (h || "(column " + (i + 1) + ")") }; });
+
+    var barcodeField = el("div", { class: "field" }, [
+      el("label", { text: "Barcode column" }),
+      buildColSelect(colOptions, importState.barcodeCol, function (v) { importState.barcodeCol = v; renderPreview(); })
+    ]);
+    var descField = el("div", { class: "field" }, [
+      el("label", { text: "Description column" }),
+      buildColSelect(colOptions, importState.descCol, function (v) { importState.descCol = v; renderPreview(); })
+    ]);
+    holder.appendChild(barcodeField);
+    holder.appendChild(descField);
+
+    var previewHolder = el("div", { id: "previewHolder" });
+    holder.appendChild(previewHolder);
+
+    var confirmBtn = el("button", { class: "btn btn-primary btn-block", text: "Start new stock check with this list" });
+    confirmBtn.addEventListener("click", confirmImport);
+    holder.appendChild(confirmBtn);
+
+    renderPreview();
+  }
+
+  function buildColSelect(options, selected, onChange) {
+    var sel = el("select");
+    options.forEach(function (o) {
+      var opt = el("option", { value: String(o.i), text: o.label });
+      if (o.i === selected) opt.setAttribute("selected", "selected");
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", function () { onChange(parseInt(sel.value, 10)); });
+    return sel;
+  }
+
+  function renderPreview() {
+    var holder = $("#previewHolder");
+    if (!holder || !importState) return;
+    holder.innerHTML = "";
+    var wrap = el("div", { class: "table-wrap" });
+    var table = el("table", { class: "preview" });
+    var thead = el("thead", {}, [el("tr", {}, [el("th", { text: "Barcode" }), el("th", { text: "Description" })])]);
+    var tbody = el("tbody");
+    importState.rows.slice(0, 5).forEach(function (r) {
+      tbody.appendChild(el("tr", {}, [
+        el("td", { class: "mono", text: r[importState.barcodeCol] || "" }),
+        el("td", { text: r[importState.descCol] || "" })
+      ]));
+    });
+    table.appendChild(thead); table.appendChild(tbody);
+    wrap.appendChild(table);
+    holder.appendChild(wrap);
+    holder.appendChild(el("p", { class: "hint", text: importState.rows.length + " rows detected. Preview of first 5." }));
+  }
+
+  async function confirmImport() {
+    if (!importState) return;
+    if (!state.dbApi) { toast("Not connected \u2014 can't import"); return; }
+    var ok = window.confirm("Starting a new stock check clears any counts already saved. Continue?");
+    if (!ok) return;
+
+    var rows = importState.rows.slice(0, MAX_PRODUCTS).map(function (r) {
+      var barcode = String(r[importState.barcodeCol] || "").trim();
+      var description = String(r[importState.descCol] || "").trim();
+      return { barcode: barcode, description: description };
+    }).filter(function (r) { return r.barcode; });
+
+    if (!rows.length) { toast("No rows with a barcode found"); return; }
+
+    toast("Importing\u2026");
+
+    try {
+      var existingIds = Object.keys(state.products);
+      await withConcurrency(existingIds, 12, function (id) {
+        return state.dbApi.doc("products/" + id).delete();
+      });
+
+      await withConcurrency(rows, 12, function (r) {
+        var id = sanitizeId(r.barcode);
+        return state.dbApi.doc("products/" + id).set({
+          barcode: r.barcode, description: r.description,
+          countedQty: null, updatedBy: null, updatedAt: null
+        });
+      });
+
+      await state.dbApi.doc("meta/session").set({
+        name: importState.fileName.replace(/\.[^.]+$/, ""),
+        sourceFileName: importState.fileName,
+        totalProducts: rows.length,
+        startedAt: nowIso(),
+        startedBy: state.staffName || "Staff"
+      });
+
+      importState = null;
+      $("#importMapHolder").innerHTML = "";
+      toast("Stock check started with " + rows.length + " products");
+      switchTab("scan");
+    } catch (e) {
+      toast("Import failed: " + (e && e.code ? e.code : "error"));
+    }
+  }
+
+  async function resetCounts() {
+    if (!state.dbApi) { toast("Not connected"); return; }
+    var ok = window.confirm("Set every item's counted quantity back to not-counted? This keeps the product list.");
+    if (!ok) return;
+    var ids = Object.keys(state.products);
+    if (!ids.length) { toast("Nothing to reset"); return; }
+    toast("Resetting\u2026");
+    await withConcurrency(ids, 12, function (id) {
+      return state.dbApi.doc("products/" + id).update({ countedQty: null, updatedBy: null, updatedAt: null });
+    });
+    toast("Counts reset");
+  }
+
+  async function exportResults() {
+    if (!state.downloadsApi) { toast("Downloads aren't available in this view"); return; }
+    var ids = Object.keys(state.products);
+    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Updated By", "Updated At"]];
+    ids.forEach(function (id) {
+      var p = state.products[id];
+      aoa.push([p.barcode || id, p.description || "", isCounted(p) ? p.countedQty : "", isCounted(p) ? "Counted" : "Not counted", p.updatedBy || "", p.updatedAt ? fmtWhen(p.updatedAt) : ""]);
+    });
+    var extraIds = Object.keys(state.extras);
+    if (extraIds.length) {
+      aoa.push([]);
+      aoa.push(["Extra items (not on original list)"]);
+      aoa.push(["Barcode", "Description", "Qty", "Added By", "Added At"]);
+      extraIds.forEach(function (id) {
+        var ex = state.extras[id];
+        aoa.push([ex.barcode || id, ex.description || "", ex.qty, ex.addedBy || "", ex.addedAt ? fmtWhen(ex.addedAt) : ""]);
+      });
+    }
+    var wb = XLSX.utils.book_new();
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    XLSX.utils.book_append_sheet(wb, ws, "Stock check");
+    var wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    var blob = new Blob([wbout], { type: "application/octet-stream" });
+    var fname = "stock-check-" + new Date().toISOString().slice(0, 10) + ".xlsx";
+    try {
+      await state.downloadsApi.save({ filename: fname, data: blob });
+      toast("Exported");
+    } catch (e) {
+      if (e && e.code === "declined") return;
+      toast("Couldn't export: " + (e && e.code ? e.code : "error"));
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * Boot
+   * ------------------------------------------------------------- */
+  $all("nav.tabs button").forEach(function (b) {
+    b.addEventListener("click", function () { switchTab(b.dataset.tab); });
+  });
+  $("#staffChip").addEventListener("click", promptStaffName);
+
+  (async function boot() {
+    await initCapabilities();
+    await resolveStaffName();
+    subscribeSession();
+    subscribeProducts();
+    subscribeExtras();
+    switchTab("scan");
+  })();
+})();
+</script>
+</body>
+</html>
