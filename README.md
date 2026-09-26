@@ -23,8 +23,8 @@ database instead, and Firebase isn't touched.
 1. Create a project at <https://console.firebase.google.com> and add a
    **Web app**.
 2. **Build > Firestore Database > Create database.**
-3. Copy the web app's config into `window.FIREBASE_CONFIG` near the top of
-   `index.html`, replacing the `YOUR_...` placeholders. Until you do, the page
+3. The web app config lives in `window.FIREBASE_CONFIG` near the top of
+   `index.html` (project `stockchek-1dbe4`). With placeholder values the page
    shows "Live sync unavailable".
 4. Deploy the security rules and host the page:
    ```sh
