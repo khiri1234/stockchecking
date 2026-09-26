@@ -9,6 +9,20 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+  /* Firebase project config (Firebase console > Project settings > Your apps).
+   * Used only when the page is not running as a claude.ai artifact. */
+  window.FIREBASE_CONFIG = {
+    apiKey: "AIzaSyDW-xKGl69U3JUDLT-LwnE25xFPEf1DLM0",
+    authDomain: "stockchek-1dbe4.firebaseapp.com",
+    projectId: "stockchek-1dbe4",
+    storageBucket: "stockchek-1dbe4.firebasestorage.app",
+    messagingSenderId: "714433759504",
+    appId: "1:714433759504:web:d040322449afeb2d33bd95"
+  };
+</script>
 <style>
   :root {
     --bg: #EDEFF2;
@@ -356,6 +370,8 @@
     s = s.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
     if (s.length > 190) s = s.slice(0, 190);
     if (!s) s = "item_" + Math.random().toString(36).slice(2, 10);
+    // Firestore rejects "." / ".." and ids of the form __x__ as document ids
+    if (/^\.\.?$/.test(s) || /^__.*__$/.test(s)) s = "id_" + s;
     return s;
   }
   function nowIso() { return new Date().toISOString(); }
@@ -397,6 +413,24 @@
   /* ---------------------------------------------------------------
    * Claude capabilities
    * ------------------------------------------------------------- */
+  function firebaseConfigured() {
+    var c = window.FIREBASE_CONFIG;
+    return typeof firebase !== "undefined" && c && c.apiKey && c.projectId &&
+      c.apiKey.indexOf("YOUR_") !== 0 && c.projectId.indexOf("YOUR_") !== 0;
+  }
+
+  // Same shape as the claude.ai downloads capability, using a plain <a download>
+  var browserDownloads = {
+    save: async function (opts) {
+      var url = URL.createObjectURL(opts.data);
+      var a = el("a", { href: url, download: opts.filename });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+  };
+
   async function initCapabilities() {
     try {
       if (window.claude && window.claude.use) {
@@ -406,10 +440,23 @@
       }
     } catch (e) { /* design for absence */ }
 
+    // Outside claude.ai: use Firebase Firestore. Its compat API (doc/collection,
+    // get/set/update/delete, onSnapshot) matches what the rest of the page calls.
+    if (!state.dbApi && firebaseConfigured()) {
+      try {
+        if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+        var fs = firebase.firestore();
+        // Offline cache: counts saved without signal are sent once back online
+        try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
+        state.dbApi = fs;
+      } catch (e) { console.warn("firebase init failed", e); }
+    }
+    if (!state.downloadsApi) state.downloadsApi = browserDownloads;
+
     if (!state.dbApi) {
       $("#sessionName").textContent = "Live sync unavailable in this view";
       var b = el("div", { class: "banner err" }, [
-        document.createTextNode("This view can't reach the shared database, so counts won't sync between devices. Open this page from claude.ai to enable shared syncing.")
+        document.createTextNode("This view can't reach the shared database, so counts won't sync between devices. Add your Firebase project config to FIREBASE_CONFIG in index.html, or open this page from claude.ai.")
       ]);
       $("#app").insertBefore(b, $("main"));
     }

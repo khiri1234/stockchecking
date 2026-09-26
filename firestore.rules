@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// The app has no sign-in, so anyone who has the page (and therefore the
+// project config) can read and write these collections. These rules only
+// limit what can be written and where. Add Firebase Auth before storing
+// anything sensitive.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Uploaded product list plus the counted quantity for each item
+    match /products/{id} {
+      allow read, delete: if true;
+      allow create, update: if request.resource.data.barcode is string
+        && request.resource.data.barcode.size() <= 200
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 1000
+        && (request.resource.data.countedQty == null || request.resource.data.countedQty is int);
+    }
+
+    // Scanned items that weren't on the uploaded list
+    match /extras/{id} {
+      allow read, delete: if true;
+      allow create, update: if request.resource.data.barcode is string
+        && request.resource.data.barcode.size() <= 200
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 1000
+        && request.resource.data.qty is int;
+    }
+
+    // Current stock check session details
+    match /meta/session {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
