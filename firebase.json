@@ -4,6 +4,19 @@
   },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "firestore.rules", "README.md", "**/.*"]
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "capacitor.config.json",
+      "node_modules/**",
+      "ios/**",
+      "www/**",
+      "scripts/**",
+      "resources/**",
+      "**/.*"
+    ]
   }
 }
