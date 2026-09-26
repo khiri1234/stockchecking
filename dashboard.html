@@ -410,7 +410,8 @@
   /* ---------------- sign-in ---------------- */
   async function showAuthScreen(message) {
     var mode = "login";
-    try { if (!(await SC.isSetupDone())) mode = "setup"; } catch (e) {}
+    // Don't leave people waiting if the server is slow: assume sign-in
+    try { if (!(await SC.withTimeout(SC.isSetupDone(), 5000))) mode = "setup"; } catch (e) {}
     if (state.user) return;
     document.body.classList.add("signed-out");
     var root = $("#authRoot");
@@ -1443,7 +1444,10 @@
       return;
     }
     state.db = fb.db;
-    SC.onAuth(onAuthChanged);
+    var authHeard = false;
+    SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); });
+    // If the sign-in service is slow to answer, show the sign-in screen anyway
+    setTimeout(function () { if (!authHeard && !state.user) showAuthScreen(""); }, 4000);
   })();
 })();
 </script>
