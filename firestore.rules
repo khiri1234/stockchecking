@@ -1,35 +1,104 @@
 rules_version = '2';
 
-// The app has no sign-in, so anyone who has the page (and therefore the
-// project config) can read and write these collections. These rules only
-// limit what can be written and where. Add Firebase Auth before storing
-// anything sensitive.
+// Everyone signs in with a username and password (Firebase Authentication).
+// A sign-in only grants access when users/{uid} exists and is active, so an
+// account created directly against the Auth API gets nothing.
+//
+// Roles: "admin" manages staff, imports lists, resets counts and reads the
+// activity log. "staff" can count items and add extra items.
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function signedIn() { return request.auth != null; }
+    function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function isActive() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.active == true;
+    }
+    function isAdmin() { return isActive() && userDoc().data.role == 'admin'; }
+
+    // First-run setup: the very first account makes itself admin in the same
+    // batch that creates meta/setup. Once meta/setup exists this is closed.
+    function isSetupBatch() {
+      return signedIn()
+        && !exists(/databases/$(database)/documents/meta/setup)
+        && existsAfter(/databases/$(database)/documents/meta/setup);
+    }
+
+    function validItem(d) {
+      return d.barcode is string && d.barcode.size() > 0 && d.barcode.size() <= 200
+        && d.description is string && d.description.size() <= 1000;
+    }
+
     // Uploaded product list plus the counted quantity for each item
     match /products/{id} {
-      allow read, delete: if true;
-      allow create, update: if request.resource.data.barcode is string
-        && request.resource.data.barcode.size() <= 200
-        && request.resource.data.description is string
-        && request.resource.data.description.size() <= 1000
-        && (request.resource.data.countedQty == null || request.resource.data.countedQty is int);
+      allow read: if isActive();
+      allow create: if isAdmin() && validItem(request.resource.data);
+      allow delete: if isAdmin();
+      allow update: if validItem(request.resource.data)
+        && (request.resource.data.countedQty == null || request.resource.data.countedQty is int)
+        && (isAdmin()
+          || (isActive()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['countedQty', 'updatedBy', 'updatedByUid', 'updatedAt'])
+            && request.resource.data.updatedByUid == request.auth.uid));
     }
 
     // Scanned items that weren't on the uploaded list
     match /extras/{id} {
-      allow read, delete: if true;
-      allow create, update: if request.resource.data.barcode is string
-        && request.resource.data.barcode.size() <= 200
-        && request.resource.data.description is string
-        && request.resource.data.description.size() <= 1000
-        && request.resource.data.qty is int;
+      allow read: if isActive();
+      allow create, update: if isActive() && validItem(request.resource.data)
+        && request.resource.data.qty is int
+        && request.resource.data.addedByUid == request.auth.uid;
+      allow delete: if isAdmin();
     }
 
-    // Current stock check session details
+    // Current stock check details
     match /meta/session {
-      allow read, write: if true;
+      allow read: if isActive();
+      allow write: if isAdmin();
+    }
+
+    // Marks that the first admin has been created
+    match /meta/setup {
+      allow get: if true;
+      allow create: if signedIn()
+        && !exists(/databases/$(database)/documents/meta/setup)
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Staff accounts. Password resets create a new sign-in account and mark
+    // the old document inactive with replacedBy, so history stays intact.
+    match /users/{uid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        || (isSetupBatch() && request.auth.uid == uid
+            && request.resource.data.role == 'admin' && request.resource.data.active == true);
+      allow update: if isAdmin() && request.resource.data.username == resource.data.username;
+      // Staff may delete their own account (App Store requirement)
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    // Username -> sign-in email lookup, needed before signing in.
+    // Readable one at a time only; the list of usernames can't be fetched.
+    match /usernames/{username} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isAdmin() || (isSetupBatch() && request.resource.data.uid == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Append-only activity log
+    match /activity/{id} {
+      allow read: if isAdmin();
+      allow create: if isActive()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.action is string;
+      allow update, delete: if false;
     }
 
     match /{document=**} {

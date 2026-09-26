@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -11,18 +11,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-<script>
-  /* Firebase project config (Firebase console > Project settings > Your apps).
-   * Used only when the page is not running as a claude.ai artifact. */
-  window.FIREBASE_CONFIG = {
-    apiKey: "AIzaSyDW-xKGl69U3JUDLT-LwnE25xFPEf1DLM0",
-    authDomain: "stockchek-1dbe4.firebaseapp.com",
-    projectId: "stockchek-1dbe4",
-    storageBucket: "stockchek-1dbe4.firebasestorage.app",
-    messagingSenderId: "714433759504",
-    appId: "1:714433759504:web:d040322449afeb2d33bd95"
-  };
-</script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="common.js"></script>
 <style>
   :root {
     --bg: #EDEFF2;
@@ -178,6 +168,9 @@
     box-shadow: 0 3px 0 var(--accent-2); transition: transform .08s ease, box-shadow .08s ease;
   }
   .icon-btn:active { transform: translateY(3px); box-shadow: 0 0 0 var(--accent-2); }
+  .icon-btn.go { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
+  .icon-btn.go:active { box-shadow: 0 0 0 rgba(255,255,255,.35); }
+  .icon-btn[hidden] { display: none; }
 
   .btn {
     padding: 12px 16px; border-radius: var(--radius-sm); border: 1.5px solid transparent; font-size: 14px;
@@ -206,7 +199,7 @@
   .qty-row { display: flex; align-items: center; gap: 10px; }
   .qty-row button { width: 46px; height: 46px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 20px; cursor: pointer; }
   .qty-row button:active { background: var(--surface-2); }
-  .qty-row input { flex: 1; text-align: center; font-size: 24px; font-weight: 700; padding: 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", monospace; }
+  .qty-row input { flex: 1; min-width: 0; text-align: center; font-size: 24px; font-weight: 700; padding: 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", monospace; }
   .qty-row input:focus { outline: none; border-color: var(--accent); }
   .save-row { display: flex; gap: 8px; margin-top: 12px; }
   .unknown-msg { font-size: 13px; color: var(--ink-dim); margin-bottom: 10px; }
@@ -269,6 +262,25 @@
   .banner { padding: 11px 12px; border-radius: var(--radius-sm); font-size: 12.5px; margin-bottom: 12px; line-height: 1.5; border-left: 3px solid var(--accent); background: var(--surface-2); }
   .banner.warn { background: var(--surface-2); color: var(--ink); }
   .banner.err { background: var(--bad-bg); color: var(--bad); border-left-color: var(--bad); }
+
+  /* Sign-in screen */
+  #authRoot { position: fixed; inset: 0; z-index: 150; background: var(--bg); overflow-y: auto;
+    display: flex; align-items: center; justify-content: center;
+    padding: calc(24px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+  #authRoot[hidden] { display: none; }
+  body.signed-out #app { visibility: hidden; }
+  .auth-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 26px 22px 22px; box-shadow: var(--shadow-lg); }
+  .auth-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }
+  .auth-brand .glyph { width: 42px; height: 42px; border-radius: 11px; background: var(--ink); color: var(--bg); display: flex; align-items: center; justify-content: center; }
+  .auth-brand h1 { margin: 0; font-size: 22px; font-family: "Space Grotesk", sans-serif; }
+  .auth-sub { font-size: 13px; color: var(--ink-dim); line-height: 1.5; margin: 0 0 18px; }
+  .auth-field { display: block; margin-bottom: 12px; }
+  .auth-field span { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-dim); margin-bottom: 5px; }
+  .auth-field input { width: 100%; padding: 12px; font-size: 16px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); }
+  .auth-field input:focus { outline: none; border-color: var(--accent); }
+  .auth-error { color: var(--bad); font-size: 13px; min-height: 18px; margin: 2px 0 10px; line-height: 1.4; }
+  .auth-error:empty { min-height: 0; margin: 0 0 6px; }
+  .menu-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -284,7 +296,7 @@
           <div class="session-name" id="sessionName">Loading&hellip;</div>
         </div>
       </div>
-      <div class="staff-chip" id="staffChip" title="Tap to change your name">
+      <div class="staff-chip" id="staffChip" title="Your account">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         <b id="staffNameLabel">&hellip;</b>
       </div>
@@ -317,6 +329,7 @@
   </main>
 </div>
 
+<div id="authRoot" hidden></div>
 <div class="toast" id="toast"></div>
 <div id="modalRoot"></div>
 
@@ -330,7 +343,7 @@
   var state = {
     dbApi: null,
     downloadsApi: null,
-    userApi: null,
+    user: null,             // signed-in profile { uid, username, name, role }
     staffName: "",
     session: null,          // meta/session doc data
     products: {},           // id -> product data (from live query, capped at 1000)
@@ -411,14 +424,8 @@
   }
 
   /* ---------------------------------------------------------------
-   * Claude capabilities
+   * Platform helpers
    * ------------------------------------------------------------- */
-  function firebaseConfigured() {
-    var c = window.FIREBASE_CONFIG;
-    return typeof firebase !== "undefined" && c && c.apiKey && c.projectId &&
-      c.apiKey.indexOf("YOUR_") !== 0 && c.projectId.indexOf("YOUR_") !== 0;
-  }
-
   // Capacitor plugin when running inside the iOS app, else null
   function nativePlugin(name) {
     var C = window.Capacitor;
@@ -462,75 +469,247 @@
   };
 
   async function initCapabilities() {
+    state.downloadsApi = nativePlugin("Filesystem") && nativePlugin("Share") ? nativeDownloads : browserDownloads;
     try {
-      if (window.claude && window.claude.use) {
-        state.dbApi = await window.claude.use("db");
-        state.downloadsApi = await window.claude.use("downloads");
-        state.userApi = await window.claude.use("user");
-      }
-    } catch (e) { /* design for absence */ }
-
-    // Outside claude.ai: use Firebase Firestore. Its compat API (doc/collection,
-    // get/set/update/delete, onSnapshot) matches what the rest of the page calls.
-    if (!state.dbApi && firebaseConfigured()) {
-      try {
-        if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
-        var fs = firebase.firestore();
-        // Offline cache: counts saved without signal are sent once back online
-        try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
-        state.dbApi = fs;
-      } catch (e) { console.warn("firebase init failed", e); }
-    }
-    if (!state.downloadsApi) {
-      state.downloadsApi = nativePlugin("Filesystem") && nativePlugin("Share") ? nativeDownloads : browserDownloads;
-    }
+      var fb = await SC.init();
+      if (fb) state.dbApi = fb.db;
+    } catch (e) { console.warn("firebase init failed", e); }
 
     if (!state.dbApi) {
       $("#sessionName").textContent = "Live sync unavailable in this view";
       var b = el("div", { class: "banner err" }, [
-        document.createTextNode("This view can't reach the shared database, so counts won't sync between devices. Add your Firebase project config to FIREBASE_CONFIG in index.html, or open this page from claude.ai.")
+        document.createTextNode("This view can't reach the shared database, so counts won't sync between devices. Check the Firebase config in common.js.")
       ]);
       $("#app").insertBefore(b, $("main"));
     }
   }
 
-  async function resolveStaffName() {
-    var override = lsGet("stockcheck_name");
-    if (override) { state.staffName = override; renderStaffChip(); return; }
-    if (state.userApi) {
-      try {
-        var id = await state.userApi.id();
-        if (id) {
-          var profiles = await state.userApi.profiles([id]);
-          var name = profiles && profiles[id] && profiles[id].name;
-          if (name) { state.staffName = name; renderStaffChip(); return; }
-        }
-      } catch (e) {}
-    }
-    state.staffName = "Staff";
-    renderStaffChip();
-  }
+  /* ---------------------------------------------------------------
+   * Sign-in
+   * ------------------------------------------------------------- */
   function renderStaffChip() {
-    $("#staffNameLabel").textContent = state.staffName || "Set name";
+    $("#staffNameLabel").textContent = state.user ? state.user.name : "Sign in";
   }
-  function promptStaffName() {
-    var current = state.staffName === "Staff" ? "" : state.staffName;
-    var name = window.prompt("Your name (shown next to counts you save):", current || "");
-    if (name === null) return;
-    name = name.trim();
-    if (!name) return;
-    lsSet("stockcheck_name", name);
-    state.staffName = name;
-    renderStaffChip();
-    toast("Name set to " + name);
+
+  function isAdmin() { return !!(state.user && state.user.role === "admin"); }
+
+  // Only admins start new stock checks, reset counts and export
+  function applyRole() {
+    var manageBtn = $('nav.tabs button[data-tab="manage"]');
+    manageBtn.style.display = isAdmin() ? "" : "none";
+    if (!isAdmin() && state.activeTab === "manage") switchTab("scan");
+  }
+
+  function onAuthChanged(profile, error) {
+    if (profile) {
+      var firstSignIn = !state.user;
+      state.user = profile;
+      state.staffName = profile.name;
+      hideAuthScreen();
+      renderStaffChip();
+      applyRole();
+      startSync();
+      if (firstSignIn) switchTab(state.activeTab);
+    } else {
+      state.user = null;
+      state.staffName = "";
+      stopSync();
+      closeModal();
+      renderStaffChip();
+      showAuthScreen(error ? SC.friendlyError(error) : "");
+    }
+  }
+
+  async function showAuthScreen(message) {
+    var mode = "login";
+    try { if (!(await SC.isSetupDone())) mode = "setup"; } catch (e) {}
+    if (state.user) return; // signed in while checking
+    var root = $("#authRoot");
+    // Already showing: keep what's typed, just update the message
+    if (!root.hidden && root.dataset.mode === mode && root.firstChild) {
+      if (message) root.querySelector(".auth-error").textContent = message;
+      return;
+    }
+    root.dataset.mode = mode;
+    root.innerHTML = "";
+    root.hidden = false;
+    document.body.classList.add("signed-out");
+
+    var card = el("div", { class: "auth-card" });
+    card.appendChild(el("div", { class: "auth-brand" }, [
+      el("div", { class: "glyph", html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>' }),
+      el("h1", { text: "Stock check" })
+    ]));
+    card.appendChild(el("p", { class: "auth-sub", text: mode === "setup"
+      ? "First-time setup: create the admin account. You'll add staff accounts after this."
+      : "Sign in with the username and password your manager gave you." }));
+
+    var form = el("form", { class: "auth-form", autocomplete: "on" });
+    var fields = mode === "setup"
+      ? [["name", "Your name", "text", "name"], ["username", "Username", "text", "username"], ["password", "Password (6+ characters)", "password", "new-password"], ["confirm", "Repeat password", "password", "new-password"]]
+      : [["username", "Username", "text", "username"], ["password", "Password", "password", "current-password"]];
+    var inputs = {};
+    fields.forEach(function (f) {
+      var input = el("input", { type: f[2], name: f[0], autocomplete: f[3], autocapitalize: "none", autocorrect: "off", spellcheck: "false", required: "required" });
+      inputs[f[0]] = input;
+      form.appendChild(el("label", { class: "auth-field" }, [el("span", { text: f[1] }), input]));
+    });
+    var errorBox = el("div", { class: "auth-error", role: "alert", text: message || "" });
+    form.appendChild(errorBox);
+    var submit = el("button", { type: "submit", class: "btn btn-primary btn-block", text: mode === "setup" ? "Create admin account" : "Sign in" });
+    form.appendChild(submit);
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      errorBox.textContent = "";
+      if (mode === "setup") {
+        if (!inputs.name.value.trim()) { errorBox.textContent = "Enter your name."; return; }
+        if (inputs.password.value !== inputs.confirm.value) { errorBox.textContent = "The passwords don't match."; return; }
+      }
+      submit.disabled = true;
+      submit.textContent = mode === "setup" ? "Creating…" : "Signing in…";
+      try {
+        if (mode === "setup") await SC.setupFirstAdmin(inputs.name.value, inputs.username.value, inputs.password.value);
+        else await SC.signIn(inputs.username.value, inputs.password.value);
+      } catch (err) {
+        errorBox.textContent = SC.friendlyError(err);
+        submit.disabled = false;
+        submit.textContent = mode === "setup" ? "Create admin account" : "Sign in";
+      }
+    });
+    card.appendChild(form);
+    root.appendChild(card);
+    // Focus straight away: a delayed focus could jump mid-typing
+    var firstInput = form.querySelector("input");
+    if (firstInput && !SC.isNative()) firstInput.focus();
+  }
+
+  function hideAuthScreen() {
+    var root = $("#authRoot");
+    root.hidden = true;
+    root.innerHTML = "";
+    document.body.classList.remove("signed-out");
   }
 
   /* ---------------------------------------------------------------
-   * DB subscriptions
+   * Account menu
    * ------------------------------------------------------------- */
+  function closeModal() { var m = $("#accountOverlay"); if (m) m.remove(); }
+
+  // Modal with inputs; onSubmit(values) returns a promise, errors show inline
+  function formModal(opts) {
+    closeModal();
+    var overlay = el("div", { class: "modal-overlay", id: "accountOverlay" });
+    var modal = el("form", { class: "modal" });
+    modal.appendChild(el("h3", { text: opts.title }));
+    if (opts.text) modal.appendChild(el("p", { text: opts.text }));
+    var inputs = {};
+    (opts.fields || []).forEach(function (f) {
+      var input = el("input", { type: f.type || "text", autocomplete: f.autocomplete || "off", required: "required" });
+      inputs[f.name] = input;
+      modal.appendChild(el("label", { class: "auth-field" }, [el("span", { text: f.label }), input]));
+    });
+    var errorBox = el("div", { class: "auth-error", role: "alert" });
+    modal.appendChild(errorBox);
+    var submit = el("button", { type: "submit", class: "btn btn-block " + (opts.danger ? "btn-danger" : "btn-primary"), text: opts.submitLabel });
+    var cancel = el("button", { type: "button", class: "btn btn-secondary btn-block", text: "Cancel", style: "margin-top:8px" });
+    cancel.addEventListener("click", closeModal);
+    modal.appendChild(submit);
+    modal.appendChild(cancel);
+    modal.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      errorBox.textContent = "";
+      var values = {};
+      Object.keys(inputs).forEach(function (k) { values[k] = inputs[k].value; });
+      submit.disabled = true;
+      try { await opts.onSubmit(values); closeModal(); }
+      catch (err) { errorBox.textContent = SC.friendlyError(err); submit.disabled = false; }
+    });
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeModal(); });
+    overlay.appendChild(modal);
+    $("#modalRoot").appendChild(overlay);
+    var first = modal.querySelector("input");
+    if (first) first.focus();
+  }
+
+  function openAccountMenu() {
+    if (!state.user) return;
+    closeModal();
+    var overlay = el("div", { class: "modal-overlay", id: "accountOverlay" });
+    var modal = el("div", { class: "modal" });
+    modal.appendChild(el("h3", { text: state.user.name }));
+    modal.appendChild(el("p", { text: "@" + state.user.username + " · " + (isAdmin() ? "Admin" : "Staff") }));
+    var list = el("div", { class: "menu-list" });
+    function item(label, fn, cls) {
+      var b = el("button", { type: "button", class: "btn btn-block " + (cls || "btn-secondary"), text: label });
+      b.addEventListener("click", fn);
+      list.appendChild(b);
+    }
+    if (!SC.isNative()) item("Open desktop dashboard", function () { location.href = "dashboard.html"; });
+    item("Change password", changePassword);
+    item("Sign out", async function () { closeModal(); await SC.signOut(); });
+    item("Delete my account", deleteAccount, "btn-danger");
+    item("Close", closeModal);
+    modal.appendChild(list);
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeModal(); });
+    overlay.appendChild(modal);
+    $("#modalRoot").appendChild(overlay);
+  }
+
+  function changePassword() {
+    formModal({
+      title: "Change password",
+      fields: [
+        { name: "current", label: "Current password", type: "password", autocomplete: "current-password" },
+        { name: "next", label: "New password (6+ characters)", type: "password", autocomplete: "new-password" },
+        { name: "confirm", label: "Repeat new password", type: "password", autocomplete: "new-password" }
+      ],
+      submitLabel: "Change password",
+      onSubmit: async function (v) {
+        if (v.next !== v.confirm) throw new Error("The new passwords don't match.");
+        await SC.changeOwnPassword(v.current, v.next);
+        toast("Password changed");
+      }
+    });
+  }
+
+  function deleteAccount() {
+    formModal({
+      title: "Delete my account",
+      text: "This permanently deletes your sign-in. Counts you've already saved stay in the stock check. Enter your password to confirm.",
+      fields: [{ name: "password", label: "Password", type: "password", autocomplete: "current-password" }],
+      submitLabel: "Delete account",
+      danger: true,
+      onSubmit: async function (v) {
+        var admins;
+        if (isAdmin()) {
+          var snap = await state.dbApi.collection("users").where("role", "==", "admin").get();
+          admins = snap.docs.filter(function (d) { var u = d.data(); return u.active && !u.replacedBy; }).length;
+        }
+        await SC.deleteOwnAccount(v.password, admins);
+        toast("Account deleted");
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------------
+   * DB subscriptions (only while signed in)
+   * ------------------------------------------------------------- */
+  var unsubs = [];
+  function startSync() {
+    if (unsubs.length || !state.dbApi) return;
+    unsubs = [subscribeSession(), subscribeProducts(), subscribeExtras()];
+  }
+  function stopSync() {
+    unsubs.forEach(function (u) { if (u) u(); });
+    unsubs = [];
+    state.session = null;
+    state.products = {};
+    state.extras = {};
+    state.currentScan = null;
+  }
+
   function subscribeSession() {
-    if (!state.dbApi) return;
-    state.dbApi.doc("meta/session").onSnapshot(function (snap) {
+    return state.dbApi.doc("meta/session").onSnapshot(function (snap) {
       state.session = snap.exists ? snap.data() : null;
       renderHeader();
       renderManageStatus();
@@ -540,8 +719,7 @@
   }
 
   function subscribeProducts() {
-    if (!state.dbApi) return;
-    state.dbApi.collection("products").orderBy("barcode").limit(MAX_PRODUCTS).onSnapshot(function (snap) {
+    return state.dbApi.collection("products").orderBy("barcode").limit(MAX_PRODUCTS).onSnapshot(function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.products = map;
@@ -555,8 +733,7 @@
   }
 
   function subscribeExtras() {
-    if (!state.dbApi) return;
-    state.dbApi.collection("extras").limit(500).onSnapshot(function (snap) {
+    return state.dbApi.collection("extras").limit(500).onSnapshot(function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.extras = map;
@@ -611,16 +788,26 @@
     var hero = el("div", { class: "scan-hero" });
     hero.appendChild(el("div", { class: "laser" }));
     hero.appendChild(el("h2", { text: "Scan or enter a barcode" }));
-    hero.appendChild(el("p", { class: "hint", text: "Handheld scanners type straight into the field. Or use the camera, or type the code and press enter." }));
+    hero.appendChild(el("p", { class: "hint", text: "Handheld scanners type straight into the field. Or use the camera, or type the code and tap the arrow." }));
     var form = el("form", { class: "scan-form" });
-    var input = el("input", { type: "text", inputmode: "numeric", autocomplete: "off", placeholder: "Barcode", id: "scanInput" });
+    var input = el("input", { type: "text", inputmode: "numeric", enterkeyhint: "go", autocomplete: "off", placeholder: "Barcode", id: "scanInput" });
+    // The iPhone number pad has no Enter key, so typed barcodes need a button
+    var goBtn = el("button", { type: "submit", class: "icon-btn go", title: "Find barcode", "aria-label": "Find barcode" });
+    goBtn.appendChild(arrowIcon());
+    goBtn.hidden = true;
+    input.addEventListener("input", function () { goBtn.hidden = !input.value.trim(); });
     var camBtn = el("button", { type: "button", class: "icon-btn", title: "Scan with camera" });
     camBtn.appendChild(cameraIcon());
     form.appendChild(input);
+    form.appendChild(goBtn);
     form.appendChild(camBtn);
     form.addEventListener("submit", function (e) {
       e.preventDefault();
-      handleScan(input.value);
+      goBtn.hidden = true;
+      // Typed on the on-screen keypad: close it so the product card is visible.
+      // Handheld scanners press Enter instead and keep focus for the next scan.
+      var typed = e.submitter === goBtn;
+      handleScan(input.value).then(function () { if (typed) input.blur(); });
     });
     camBtn.addEventListener("click", openCameraScanner);
     hero.appendChild(form);
@@ -632,6 +819,12 @@
     if (state.currentScan) renderScannedCard();
 
     setTimeout(function () { var i = $("#scanInput"); if (i) i.focus(); }, 50);
+  }
+
+  function arrowIcon() {
+    var wrap = el("div");
+    wrap.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>';
+    return wrap.firstChild;
   }
 
   function cameraIcon() {
@@ -747,11 +940,16 @@
 
   async function saveProductCount(id, qty) {
     if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
+    var before = state.products[id] || {};
     try {
       await state.dbApi.doc("products/" + id).update({
-        countedQty: qty, updatedBy: state.staffName || "Staff", updatedAt: nowIso()
+        countedQty: qty, updatedBy: state.staffName || "Staff", updatedByUid: state.user.uid, updatedAt: nowIso()
       });
       toast("Saved: " + qty);
+      SC.log("count_saved", {
+        barcode: before.barcode || id, description: before.description || "",
+        qty: qty, prevQty: isCounted(before) ? before.countedQty : null
+      });
     } catch (e) {
       toast("Couldn't save: " + (e && e.code ? e.code : "error"));
     }
@@ -760,11 +958,13 @@
   async function saveExtra(id, barcode, description, qty) {
     if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
     try {
+      var before = state.extras[id];
       await state.dbApi.doc("extras/" + id).set({
         barcode: barcode, description: description, qty: qty,
-        addedBy: state.staffName || "Staff", addedAt: nowIso()
+        addedBy: state.staffName || "Staff", addedByUid: state.user.uid, addedAt: nowIso()
       });
       toast("Saved: " + qty);
+      SC.log("extra_added", { barcode: barcode, description: description, qty: qty, prevQty: before ? before.qty : null });
     } catch (e) {
       toast("Couldn't save: " + (e && e.code ? e.code : "error"));
     }
@@ -1152,7 +1352,7 @@
         var id = sanitizeId(r.barcode);
         return state.dbApi.doc("products/" + id).set({
           barcode: r.barcode, description: r.description,
-          countedQty: null, updatedBy: null, updatedAt: null
+          countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null
         });
       });
 
@@ -1164,9 +1364,11 @@
         startedBy: state.staffName || "Staff"
       });
 
+      var importedFile = importState.fileName;
       importState = null;
       $("#importMapHolder").innerHTML = "";
       toast("Stock check started with " + rows.length + " products");
+      SC.log("import", { detail: importedFile + " \u00b7 " + rows.length + " products" });
       switchTab("scan");
     } catch (e) {
       toast("Import failed: " + (e && e.code ? e.code : "error"));
@@ -1181,9 +1383,10 @@
     if (!ids.length) { toast("Nothing to reset"); return; }
     toast("Resetting\u2026");
     await withConcurrency(ids, 12, function (id) {
-      return state.dbApi.doc("products/" + id).update({ countedQty: null, updatedBy: null, updatedAt: null });
+      return state.dbApi.doc("products/" + id).update({ countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null });
     });
     toast("Counts reset");
+    SC.log("reset_counts", { detail: ids.length + " items" });
   }
 
   async function exportResults() {
@@ -1213,6 +1416,7 @@
     try {
       await state.downloadsApi.save({ filename: fname, data: blob });
       toast("Exported");
+      SC.log("export", { detail: fname });
     } catch (e) {
       if (e && e.code === "declined") return;
       toast("Couldn't export: " + (e && e.code ? e.code : "error"));
@@ -1225,15 +1429,20 @@
   $all("nav.tabs button").forEach(function (b) {
     b.addEventListener("click", function () { switchTab(b.dataset.tab); });
   });
-  $("#staffChip").addEventListener("click", promptStaffName);
+  $("#staffChip").addEventListener("click", function () {
+    if (state.user) openAccountMenu(); else showAuthScreen("");
+  });
 
   (async function boot() {
+    // Computers get the desktop dashboard; add ?mobile to the URL to stay here
+    if (!SC.isNative() && window.matchMedia("(min-width: 1024px)").matches && !/[?&]mobile\b/.test(location.search)) {
+      location.replace("dashboard.html");
+      return;
+    }
     await initCapabilities();
-    await resolveStaffName();
-    subscribeSession();
-    subscribeProducts();
-    subscribeExtras();
+    renderStaffChip();
     switchTab("scan");
+    if (state.dbApi) SC.onAuth(onAuthChanged);
   })();
 })();
 </script>

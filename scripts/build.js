@@ -13,6 +13,7 @@ const scripts = {
   "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js": ["@zxing/library/umd/index.min.js", "zxing.min.js"],
   "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js": ["firebase/firebase-app-compat.js", "firebase-app-compat.js"],
   "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js": ["firebase/firebase-firestore-compat.js", "firebase-firestore-compat.js"],
+  "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js": ["firebase/firebase-auth-compat.js", "firebase-auth-compat.js"],
 };
 const modules = path.join(root, "node_modules");
 
@@ -30,6 +31,9 @@ for (const [url, [mod, name]] of Object.entries(scripts)) {
 // Capacitor core adds registerPlugin() on top of the native bridge
 fs.copyFileSync(path.join(modules, "@capacitor/core/dist/capacitor.js"), path.join(vendor, "capacitor.js"));
 html = html.replace('<script src="vendor/', '<script src="vendor/capacitor.js"></script>\n<script src="vendor/');
+
+// Shared sign-in / Firebase code
+fs.copyFileSync(path.join(root, "common.js"), path.join(out, "common.js"));
 
 fs.writeFileSync(path.join(out, "index.html"), html);
 console.log("Built www/ (" + Object.keys(scripts).length + " libraries bundled)");
