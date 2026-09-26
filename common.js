@@ -73,6 +73,14 @@
 
   function err(code, message) { var e = new Error(message || code); e.code = code; return e; }
 
+  // Rejects with code "timeout" if the promise takes longer than ms
+  function withTimeout(promise, ms) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(err("timeout")); }, ms);
+      promise.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+
   function friendlyError(e) {
     var code = (e && e.code) || "";
     var map = {
@@ -87,6 +95,8 @@
       "auth/operation-not-allowed": "Username sign-in isn't switched on in Firebase yet (Authentication > Sign-in method > Email/Password).",
       "auth/configuration-not-found": "Username sign-in isn't switched on in Firebase yet (Authentication > Sign-in method > Email/Password).",
       "inactive": "This account has been switched off. Ask your manager.",
+      "timeout": "The server didn't answer. Check your internet connection and try again.",
+      "unavailable": "No connection to the server. Check your internet connection and try again.",
       "username-taken": "That username is already in use.",
       "bad-username": "Usernames are 3–30 characters: letters, numbers, dots, dashes or underscores.",
       "permission-denied": "You don't have permission to do that.",
@@ -200,13 +210,16 @@
 
   async function signIn(rawUsername, password) {
     var username = normalizeUsername(rawUsername);
-    var entry = validUsername(username) ? await lookupUsername(username) : null;
+    var entry = validUsername(username) ? await withTimeout(lookupUsername(username), 15000) : null;
     if (!entry) throw err("auth/invalid-credential");
-    var cred = await auth.signInWithEmailAndPassword(entry.email, password);
-    var p = await loadProfile(cred.user.uid);
+    var cred = await withTimeout(auth.signInWithEmailAndPassword(entry.email, password), 20000);
+    var p = await withTimeout(loadProfile(cred.user.uid), 15000);
     if (!p || !p.active) { await auth.signOut(); throw err("inactive"); }
     profile = p;
     await log("login");
+    // Open the app now instead of waiting for the sign-in listener to catch up
+    watchProfile(p.uid);
+    if (authCb) authCb(p);
     return p;
   }
 
@@ -368,6 +381,7 @@
     log: log,
     actionLabel: function (a) { return ACTION_LABELS[a] || a; },
     friendlyError: friendlyError,
+    withTimeout: withTimeout,
     normalizeUsername: normalizeUsername,
     validUsername: validUsername,
     profile: function () { return profile; },

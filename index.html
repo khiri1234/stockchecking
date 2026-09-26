@@ -522,7 +522,8 @@
 
   async function showAuthScreen(message) {
     var mode = "login";
-    try { if (!(await SC.isSetupDone())) mode = "setup"; } catch (e) {}
+    // Don't leave people waiting if the server is slow: assume sign-in
+    try { if (!(await SC.withTimeout(SC.isSetupDone(), 5000))) mode = "setup"; } catch (e) {}
     if (state.user) return; // signed in while checking
     var root = $("#authRoot");
     // Already showing: keep what's typed, just update the message
@@ -1442,7 +1443,13 @@
     await initCapabilities();
     renderStaffChip();
     switchTab("scan");
-    if (state.dbApi) SC.onAuth(onAuthChanged);
+    if (state.dbApi) {
+      var authHeard = false;
+      SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); });
+      // If the sign-in service is slow to answer, show the sign-in screen anyway
+      // rather than leaving the app on "Loading..."
+      setTimeout(function () { if (!authHeard && !state.user) showAuthScreen(""); }, 4000);
+    }
   })();
 })();
 </script>
