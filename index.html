@@ -178,6 +178,9 @@
     box-shadow: 0 3px 0 var(--accent-2); transition: transform .08s ease, box-shadow .08s ease;
   }
   .icon-btn:active { transform: translateY(3px); box-shadow: 0 0 0 var(--accent-2); }
+  .icon-btn.go { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
+  .icon-btn.go:active { box-shadow: 0 0 0 rgba(255,255,255,.35); }
+  .icon-btn[hidden] { display: none; }
 
   .btn {
     padding: 12px 16px; border-radius: var(--radius-sm); border: 1.5px solid transparent; font-size: 14px;
@@ -206,7 +209,7 @@
   .qty-row { display: flex; align-items: center; gap: 10px; }
   .qty-row button { width: 46px; height: 46px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 20px; cursor: pointer; }
   .qty-row button:active { background: var(--surface-2); }
-  .qty-row input { flex: 1; text-align: center; font-size: 24px; font-weight: 700; padding: 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", monospace; }
+  .qty-row input { flex: 1; min-width: 0; text-align: center; font-size: 24px; font-weight: 700; padding: 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-family: "IBM Plex Mono", monospace; }
   .qty-row input:focus { outline: none; border-color: var(--accent); }
   .save-row { display: flex; gap: 8px; margin-top: 12px; }
   .unknown-msg { font-size: 13px; color: var(--ink-dim); margin-bottom: 10px; }
@@ -611,16 +614,26 @@
     var hero = el("div", { class: "scan-hero" });
     hero.appendChild(el("div", { class: "laser" }));
     hero.appendChild(el("h2", { text: "Scan or enter a barcode" }));
-    hero.appendChild(el("p", { class: "hint", text: "Handheld scanners type straight into the field. Or use the camera, or type the code and press enter." }));
+    hero.appendChild(el("p", { class: "hint", text: "Handheld scanners type straight into the field. Or use the camera, or type the code and tap the arrow." }));
     var form = el("form", { class: "scan-form" });
-    var input = el("input", { type: "text", inputmode: "numeric", autocomplete: "off", placeholder: "Barcode", id: "scanInput" });
+    var input = el("input", { type: "text", inputmode: "numeric", enterkeyhint: "go", autocomplete: "off", placeholder: "Barcode", id: "scanInput" });
+    // The iPhone number pad has no Enter key, so typed barcodes need a button
+    var goBtn = el("button", { type: "submit", class: "icon-btn go", title: "Find barcode", "aria-label": "Find barcode" });
+    goBtn.appendChild(arrowIcon());
+    goBtn.hidden = true;
+    input.addEventListener("input", function () { goBtn.hidden = !input.value.trim(); });
     var camBtn = el("button", { type: "button", class: "icon-btn", title: "Scan with camera" });
     camBtn.appendChild(cameraIcon());
     form.appendChild(input);
+    form.appendChild(goBtn);
     form.appendChild(camBtn);
     form.addEventListener("submit", function (e) {
       e.preventDefault();
-      handleScan(input.value);
+      goBtn.hidden = true;
+      // Typed on the on-screen keypad: close it so the product card is visible.
+      // Handheld scanners press Enter instead and keep focus for the next scan.
+      var typed = e.submitter === goBtn;
+      handleScan(input.value).then(function () { if (typed) input.blur(); });
     });
     camBtn.addEventListener("click", openCameraScanner);
     hero.appendChild(form);
@@ -632,6 +645,12 @@
     if (state.currentScan) renderScannedCard();
 
     setTimeout(function () { var i = $("#scanInput"); if (i) i.focus(); }, 50);
+  }
+
+  function arrowIcon() {
+    var wrap = el("div");
+    wrap.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>';
+    return wrap.firstChild;
   }
 
   function cameraIcon() {
