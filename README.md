@@ -39,3 +39,25 @@ database instead, and Firebase isn't touched.
 The app has no sign-in, so anyone with the page URL can read and change the
 stock data. `firestore.rules` restricts writes to the three paths above with
 the expected fields. Add Firebase Auth if the data needs protecting.
+
+## iPhone app (App Store)
+
+The `ios/` folder is a Capacitor Xcode project that wraps `index.html`. In the
+app, the libraries are bundled (no CDN), the camera button opens the native
+iOS barcode scanner, and Export opens the iOS share sheet.
+
+Needs a Mac with Xcode 16+ and Node.js 20+.
+
+```sh
+npm install
+npm run ios        # builds www/, syncs it into ios/, opens Xcode
+```
+
+In Xcode: select the **App** target > **Signing & Capabilities**, choose your
+team, then **Product > Archive** and **Distribute App > App Store Connect**.
+
+After any change to `index.html`, run `npm run ios` again before archiving.
+
+- Bundle ID: `com.khiri1234.stockcheck` (in `capacitor.config.json` and Xcode)
+- App icon: `resources/icon.png`, regenerated with `scripts/make-icon.js`
+- Privacy policy for the App Store listing: `privacy.html`
