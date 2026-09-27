@@ -1,6 +1,6 @@
 {
   "appId": "com.khiri1234.stockcheck",
-  "appName": "Stock Check",
+  "appName": "The H Stock Management",
   "webDir": "www",
   "ios": {
     "contentInset": "never",
