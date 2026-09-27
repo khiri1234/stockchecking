@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Stock Check</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,16 +74,15 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  /* App-style layout: the page itself never scrolls, only <main> does, so the
+     header stays put, including when the keyboard opens */
+  html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
     background: var(--bg);
     color: var(--ink);
     font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
     -webkit-font-smoothing: antialiased;
     -webkit-text-size-adjust: 100%;
-    min-height: 100vh;
   }
   .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
   .display { font-family: "Space Grotesk", "Inter", sans-serif; }
@@ -91,12 +90,11 @@
   /* iPhone zooms the page into any text box under 16px when it is tapped */
   :where(input:not([type=file]):not([type=checkbox]):not([type=radio]), select, textarea) { font-size: 16px; }
   svg.icon { width: 18px; height: 18px; flex-shrink: 0; }
-  #app { max-width: 720px; margin: 0 auto; padding: 0 14px 110px; }
+  #app { max-width: 720px; height: 100%; margin: 0 auto; padding: 0 14px; display: flex; flex-direction: column; }
 
-  /* Starts at the very top of the screen and covers the status bar area, so
-     the list never shows through above it when scrolling */
+  /* Fixed at the top of the screen, covering the status bar area */
   header.top {
-    position: sticky; top: 0;
+    flex-shrink: 0; position: relative;
     z-index: 30; background: var(--bg);
     padding: calc(16px + env(safe-area-inset-top, 0px)) 14px 10px; margin: 0 -14px;
   }
@@ -135,7 +133,10 @@
   nav.tabs button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
   nav.tabs button.active svg { color: var(--accent); }
 
-  main { padding-top: 16px; }
+  main {
+    flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+    margin: 0 -14px; padding: 16px 14px calc(110px + env(safe-area-inset-bottom, 0px));
+  }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; box-shadow: var(--shadow); }
   .panel h2 { font-size: 13.5px; margin: 0 0 3px; font-weight: 700; font-family: "Space Grotesk", sans-serif; }
   .panel .hint { font-size: 12.5px; color: var(--ink-dim); margin: 0 0 12px; line-height: 1.5; }
