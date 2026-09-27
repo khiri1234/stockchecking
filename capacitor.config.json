@@ -1,9 +1,16 @@
 {
   "appId": "com.khiri1234.stockcheck",
-  "appName": "Stock Check",
+  "appName": "The H Stock Management",
   "webDir": "www",
   "ios": {
     "contentInset": "never",
-    "backgroundColor": "#EDEFF2"
+    "backgroundColor": "#EDEFF2",
+    "scrollEnabled": false
+  },
+  "plugins": {
+    "Keyboard": {
+      "resize": "native",
+      "resizeOnFullScreen": true
+    }
   }
 }
