@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Stock Check</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -80,21 +80,25 @@
     background: var(--bg);
     color: var(--ink);
     font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-    padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
     min-height: 100vh;
   }
   .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
   .display { font-family: "Space Grotesk", "Inter", sans-serif; }
   button, select, input { font-family: inherit; }
+  /* iPhone zooms the page into any text box under 16px when it is tapped */
+  :where(input:not([type=file]):not([type=checkbox]):not([type=radio]), select, textarea) { font-size: 16px; }
   svg.icon { width: 18px; height: 18px; flex-shrink: 0; }
   #app { max-width: 720px; margin: 0 auto; padding: 0 14px 110px; }
 
+  /* Starts at the very top of the screen and covers the status bar area, so
+     the list never shows through above it when scrolling */
   header.top {
-    position: sticky; top: 0; top: env(safe-area-inset-top, 0px);
+    position: sticky; top: 0;
     z-index: 30; background: var(--bg);
-    padding: 16px 14px 10px; margin: 0 -14px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 14px 10px; margin: 0 -14px;
   }
   .brand { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
   .brand-mark { display: flex; align-items: center; gap: 9px; }
@@ -203,13 +207,13 @@
   .qty-row input:focus { outline: none; border-color: var(--accent); }
   .save-row { display: flex; gap: 8px; margin-top: 12px; }
   .unknown-msg { font-size: 13px; color: var(--ink-dim); margin-bottom: 10px; }
-  .extra-desc-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 14px; margin-bottom: 10px; }
+  .extra-desc-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--ink); font-size: 16px; margin-bottom: 10px; }
   .last-counted { font-size: 12px; color: var(--ink-dim); margin-top: 10px; }
 
   .filter-row { display: flex; gap: 6px; margin-bottom: 10px; }
   .filter-row button { flex: 1; padding: 8px 4px; font-size: 12.5px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-dim); cursor: pointer; font-weight: 600; }
   .filter-row button.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-  .search-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 14px; margin-bottom: 10px; }
+  .search-input { width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 16px; margin-bottom: 10px; }
   .search-input:focus { outline: none; border-color: var(--accent); }
 
   .item-row { display: flex; align-items: center; gap: 11px; padding: 11px 8px 11px 10px; border-left: 3px solid var(--border); border-bottom: 1px solid var(--border); cursor: pointer; margin-bottom: 2px; }
@@ -227,7 +231,7 @@
 
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-dim); margin-bottom: 5px; }
-  .field select, .field input[type=text] { width: 100%; padding: 10px 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 14px; }
+  .field select, .field input[type=text] { width: 100%; padding: 10px 10px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); background: var(--bg); color: var(--ink); font-size: 16px; }
 
   table.preview { width: 100%; border-collapse: collapse; font-size: 12px; }
   table.preview th, table.preview td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
