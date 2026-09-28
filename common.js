@@ -159,7 +159,11 @@
     role_changed: "Changed role",
     password_reset: "Reset password",
     password_changed: "Changed own password",
-    account_deleted: "Deleted own account"
+    account_deleted: "Deleted own account",
+    recount_requested: "Asked for a recount",
+    recount_saved: "Recounted",
+    recount_accepted: "Used the recount",
+    recount_kept: "Kept the first count"
   };
 
   /* ---------------- stock data ----------------
@@ -310,6 +314,7 @@
     say("Clearing old counts…");
     await deleteAll("counts");
     await deleteAll("extras");
+    await deleteAll("recounts");
     await deleteAll("products"); // lists saved before this format
     await db.doc("meta/stats").set({ counted: 0 });
     await db.doc("meta/session").set({
@@ -357,8 +362,61 @@
     return true;
   }
 
+  /* ---------------- recounts ----------------
+   * recounts/{barcodeId}: an admin asks for a second, blind count of an item.
+   * It keeps the first count as it was when asked (firstQty, firstBy…);
+   * someone other than the first counter saves recountQty without seeing the
+   * first number; the admin then uses the recount or keeps the first count. */
+
+  // items: [{ id, barcode, description, count: { qty, by, byUid, at } }]
+  async function requestRecounts(items) {
+    var now = new Date().toISOString();
+    for (var i = 0; i < items.length; i += 400) {
+      var batch = db.batch();
+      items.slice(i, i + 400).forEach(function (it) {
+        batch.set(db.doc("recounts/" + it.id), {
+          barcode: it.barcode, description: it.description || "", status: "open",
+          requestedBy: profile.name, requestedByUid: profile.uid, requestedAt: now,
+          firstQty: it.count.qty, firstBy: it.count.by || "", firstByUid: it.count.byUid || "", firstAt: it.count.at || ""
+        });
+      });
+      await batch.commit();
+    }
+    await log("recount_requested", items.length === 1
+      ? { barcode: items[0].barcode, description: items[0].description || "" }
+      : { detail: plural(items.length, "item") });
+    return items.length;
+  }
+
+  async function saveRecount(id, rec, qty) {
+    await db.doc("recounts/" + id).update({
+      status: "done", recountQty: qty, recountBy: profile.name, recountByUid: profile.uid, recountAt: new Date().toISOString()
+    });
+    log("recount_saved", { barcode: rec.barcode, description: rec.description || "", qty: qty });
+  }
+
+  // Admins: useRecount true makes the recount the item's count; false keeps the first count
+  async function resolveRecount(id, rec, useRecount) {
+    var batch = db.batch();
+    if (useRecount) {
+      batch.set(db.doc("counts/" + id), {
+        barcode: rec.barcode, description: rec.description || "", qty: rec.recountQty,
+        by: rec.recountBy || "", byUid: rec.recountByUid || profile.uid, at: rec.recountAt || new Date().toISOString()
+      });
+    }
+    batch.delete(db.doc("recounts/" + id));
+    await batch.commit();
+    await log(useRecount ? "recount_accepted" : "recount_kept", {
+      barcode: rec.barcode, description: rec.description || "",
+      qty: useRecount ? rec.recountQty : rec.firstQty, prevQty: useRecount ? rec.firstQty : rec.recountQty
+    });
+  }
+
+  async function cancelRecount(id) { await db.doc("recounts/" + id).delete(); }
+
   async function resetCounts(onProgress) {
     var n = await deleteAll("counts", onProgress);
+    await deleteAll("recounts");
     await db.doc("meta/stats").set({ counted: 0 });
     await log("reset_counts", { detail: plural(n, "item") });
     return n;
@@ -371,6 +429,7 @@
     await deleteCatalog();
     await deleteAll("counts");
     out.extras = await deleteAll("extras");
+    await deleteAll("recounts");
     out.products += await deleteAll("products");
     await db.doc("meta/session").delete();
     await db.doc("meta/stats").delete();
@@ -653,6 +712,10 @@
     importList: importList,
     resetCounts: resetCounts,
     migrateLegacyList: migrateLegacyList,
+    requestRecounts: requestRecounts,
+    saveRecount: saveRecount,
+    resolveRecount: resolveRecount,
+    cancelRecount: cancelRecount,
     changeOwnPassword: changeOwnPassword,
     deleteOwnAccount: deleteOwnAccount,
     log: log,
