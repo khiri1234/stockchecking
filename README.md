@@ -84,3 +84,19 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 - Privacy policy for the App Store listing: `privacy.html`
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its username and password in App Store Connect > App Review Information
+
+## Windows desktop app
+
+`desktop/` is an Electron app that opens the dashboard in its own window
+(`app://stockcheck/dashboard.html`, served from the bundled files; Firebase
+still syncs online). Web links open in the normal browser.
+
+- **Download:** every change to the app runs the **Windows desktop app**
+  workflow (Actions tab). Open the latest run and download
+  **The-H-Stock-Management-Windows** under *Artifacts*; it contains
+  `The-H-Stock-Management-Setup-x.y.z.exe`. The workflow can also be run by
+  hand (Actions > Windows desktop app > Run workflow).
+- **Install:** run the setup file. It isn't code-signed yet, so Windows may
+  show "Windows protected your PC": click **More info > Run anyway**.
+- **Run locally:** `npm install`, then `cd desktop && npm install && npm start`.
+- **Version:** `version` in `desktop/package.json`.

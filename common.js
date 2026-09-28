@@ -28,12 +28,15 @@
       FIREBASE_CONFIG.apiKey.indexOf("YOUR_") !== 0;
   }
 
-  // Inside the iOS app, leave authDomain out: with it, Firebase Auth loads a
-  // hidden sign-in iframe on start-up that never finishes in the app's web
-  // view, and sign-in hangs. Username/password sign-in doesn't need it.
+  // Windows desktop app (Electron); its preload script sets window.desktopApp
+  function isDesktopApp() { return !!window.desktopApp; }
+
+  // Inside the iOS and desktop apps, leave authDomain out: with it, Firebase
+  // Auth loads a hidden sign-in iframe on start-up that never finishes inside
+  // an app, and sign-in hangs. Username/password sign-in doesn't need it.
   function appConfig() {
     var c = Object.assign({}, FIREBASE_CONFIG);
-    if (isNative()) delete c.authDomain;
+    if (isNative() || isDesktopApp()) delete c.authDomain;
     return c;
   }
 
@@ -391,6 +394,7 @@
     config: FIREBASE_CONFIG,
     configured: configured,
     isNative: isNative,
+    isDesktopApp: isDesktopApp,
     init: init,
     onAuth: onAuth,
     signIn: signIn,
