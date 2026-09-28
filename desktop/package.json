@@ -1,0 +1,38 @@
+{
+  "name": "the-h-stock-management",
+  "productName": "The H Stock Management",
+  "version": "1.0.0",
+  "description": "The H Stock Management desktop app for Windows",
+  "author": "Hatef Hajizadeh",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "prepare-app": "node ../scripts/build.js --desktop",
+    "start": "npm run prepare-app && electron .",
+    "dist": "npm run prepare-app && electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.khiri1234.stockcheck.desktop",
+    "productName": "The H Stock Management",
+    "copyright": "Copyright © 2026 Hatef Hajizadeh",
+    "files": ["main.js", "preload.js", "app/**/*", "build/icon.png"],
+    "directories": { "output": "dist", "buildResources": "build" },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "The H Stock Management",
+      "artifactName": "The-H-Stock-Management-Setup-${version}.exe"
+    }
+  }
+}

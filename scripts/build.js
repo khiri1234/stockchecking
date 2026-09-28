@@ -1,13 +1,19 @@
-// Builds www/ for the iOS app: copies index.html and swaps the CDN <script>
-// tags for local copies from node_modules, so the app starts without a network.
+// Bundles the web pages for the apps, swapping the CDN <script> tags for local
+// copies from node_modules so they start without a network.
+//
+//   node scripts/build.js            -> www/ for the iOS app (index.html + Capacitor)
+//   node scripts/build.js --desktop  -> desktop/app/ for the Windows app
+//                                       (dashboard.html + index.html, no Capacitor)
 const fs = require("fs");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
-const out = path.join(root, "www");
+const desktop = process.argv.includes("--desktop");
+const out = desktop ? path.join(root, "desktop", "app") : path.join(root, "www");
+const pages = desktop ? ["dashboard.html", "index.html"] : ["index.html"];
 const vendor = path.join(out, "vendor");
 
-// CDN script URL -> [file in node_modules, name in www/vendor]
+// CDN script URL -> [file in node_modules, name in vendor/]
 const scripts = {
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js": ["xlsx/dist/xlsx.full.min.js", "xlsx.full.min.js"],
   "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js": ["@zxing/library/umd/index.min.js", "zxing.min.js"],
@@ -15,25 +21,32 @@ const scripts = {
   "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js": ["firebase/firebase-firestore-compat.js", "firebase-firestore-compat.js"],
   "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js": ["firebase/firebase-auth-compat.js", "firebase-auth-compat.js"],
 };
+// Every page must load these (the others are optional per page)
+const required = Object.keys(scripts).filter((u) => u.includes("firebase"));
 const modules = path.join(root, "node_modules");
 
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(vendor, { recursive: true });
 
-let html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-
-for (const [url, [mod, name]] of Object.entries(scripts)) {
-  if (!html.includes(url)) throw new Error("index.html no longer loads " + url + " - update scripts/build.js");
-  fs.copyFileSync(path.join(modules, mod), path.join(vendor, name));
-  html = html.replace(url, "vendor/" + name);
+for (const page of pages) {
+  let html = fs.readFileSync(path.join(root, page), "utf8");
+  for (const url of required) {
+    if (!html.includes(url)) throw new Error(page + " no longer loads " + url + " - update scripts/build.js");
+  }
+  for (const [url, [mod, name]] of Object.entries(scripts)) {
+    if (!html.includes(url)) continue;
+    fs.copyFileSync(path.join(modules, mod), path.join(vendor, name));
+    html = html.replace(url, "vendor/" + name);
+  }
+  if (!desktop) {
+    // Capacitor core adds registerPlugin() on top of the native bridge
+    fs.copyFileSync(path.join(modules, "@capacitor/core/dist/capacitor.js"), path.join(vendor, "capacitor.js"));
+    html = html.replace('<script src="vendor/', '<script src="vendor/capacitor.js"></script>\n<script src="vendor/');
+  }
+  fs.writeFileSync(path.join(out, page), html);
 }
-
-// Capacitor core adds registerPlugin() on top of the native bridge
-fs.copyFileSync(path.join(modules, "@capacitor/core/dist/capacitor.js"), path.join(vendor, "capacitor.js"));
-html = html.replace('<script src="vendor/', '<script src="vendor/capacitor.js"></script>\n<script src="vendor/');
 
 // Shared sign-in / Firebase code
 fs.copyFileSync(path.join(root, "common.js"), path.join(out, "common.js"));
 
-fs.writeFileSync(path.join(out, "index.html"), html);
-console.log("Built www/ (" + Object.keys(scripts).length + " libraries bundled)");
+console.log("Built " + path.relative(root, out) + "/ (" + pages.join(", ") + ")");
