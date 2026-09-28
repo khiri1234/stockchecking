@@ -104,7 +104,8 @@
       "bad-username": "Usernames are 3–30 characters: letters, numbers, dots, dashes or underscores.",
       "permission-denied": "You don't have permission to do that.",
       "setup-done": "Setup has already been completed. Sign in instead.",
-      "last-admin": "You're the only admin. Make someone else an admin first."
+      "last-admin": "You're the only admin. Make someone else an admin first.",
+      "list-incomplete": "The product list didn't load completely. Check your connection and reopen the app."
     };
     return map[code] || (e && e.message) || "Something went wrong.";
   }
@@ -161,28 +162,220 @@
     account_deleted: "Deleted own account"
   };
 
-  /* ---------------- stock check ---------------- */
+  /* ---------------- stock data ----------------
+   * Built for lists of 50,000+ items:
+   * - The product list is stored as a few large text documents,
+   *   catalog/{listId}_{n}, one "barcode<TAB>description" line per item, so a
+   *   device loads the whole list with a handful of reads and looks barcodes
+   *   up locally (instant, and works offline once loaded).
+   * - counts/{barcodeId} exists only for items someone has counted.
+   * - meta/stats.counted is the running total the progress bars show, so
+   *   phones never need to download every count. */
+
+  var MAX_ITEMS = 100000;
+  var CHUNK_BYTES = 700000; // Firestore documents max out at 1 MiB
 
   function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
 
+  function sanitizeId(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    s = s.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
+    if (s.length > 190) s = s.slice(0, 190);
+    if (!s) s = "item_" + Math.random().toString(36).slice(2, 10);
+    if (/^\.\.?$/.test(s) || /^__.*__$/.test(s)) s = "id_" + s;
+    return s;
+  }
+
+  function oneLine(v) { return String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ").trim(); }
+
+  // rows: [{ barcode, description }] -> text chunks under CHUNK_BYTES each
+  function buildChunks(rows) {
+    var enc = new TextEncoder();
+    var chunks = [], cur = [], size = 0;
+    rows.forEach(function (r) {
+      var line = oneLine(r.barcode) + "\t" + oneLine(r.description).slice(0, 1000);
+      var b = enc.encode(line).length + 1;
+      if (size + b > CHUNK_BYTES && cur.length) { chunks.push(cur.join("\n")); cur = []; size = 0; }
+      cur.push(line);
+      size += b;
+    });
+    if (cur.length) chunks.push(cur.join("\n"));
+    return chunks;
+  }
+
+  // Cleans and de-duplicates imported rows (first occurrence of a barcode wins)
+  function prepareRows(rows) {
+    var seen = {}, out = [];
+    rows.forEach(function (r) {
+      var barcode = oneLine(r.barcode);
+      if (!barcode) return;
+      var id = sanitizeId(barcode);
+      if (seen[id]) return;
+      seen[id] = true;
+      out.push({ barcode: barcode, description: oneLine(r.description) });
+    });
+    return out.slice(0, MAX_ITEMS);
+  }
+
+  var catalogCache = { listId: null, promise: null };
+
+  // -> Promise<{ items: { id: { barcode, description } }, order: [id...] }> or null
+  function loadCatalog(session) {
+    if (!session || !session.listId) return Promise.resolve(null);
+    if (catalogCache.listId === session.listId) return catalogCache.promise;
+    catalogCache.listId = session.listId;
+    catalogCache.promise = (async function () {
+      var n = session.listChunks || 0, reads = [];
+      for (var i = 0; i < n; i++) reads.push(db.doc("catalog/" + session.listId + "_" + i).get());
+      var snaps = await Promise.all(reads);
+      var items = {}, order = [];
+      snaps.forEach(function (snap) {
+        if (!snap.exists) throw err("list-incomplete");
+        String(snap.data().lines || "").split("\n").forEach(function (line) {
+          if (!line) return;
+          var t = line.indexOf("\t");
+          var barcode = t < 0 ? line : line.slice(0, t);
+          var id = sanitizeId(barcode);
+          if (items[id]) return;
+          items[id] = { barcode: barcode, description: t < 0 ? "" : line.slice(t + 1) };
+          order.push(id);
+        });
+      });
+      return { items: items, order: order };
+    })();
+    catalogCache.promise.catch(function () { catalogCache.listId = null; });
+    return catalogCache.promise;
+  }
+
+  async function getCount(id) {
+    var snap = await db.doc("counts/" + id).get();
+    return snap.exists ? snap.data() : null;
+  }
+
+  // item: { id, barcode, description }; before: the item's existing count doc (or null)
+  async function saveCount(item, qty, before) {
+    var batch = db.batch();
+    batch.set(db.doc("counts/" + item.id), {
+      barcode: item.barcode, description: item.description || "", qty: qty,
+      by: profile.name, byUid: profile.uid, at: new Date().toISOString()
+    });
+    if (!before) batch.set(db.doc("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
+    await batch.commit();
+    log("count_saved", { barcode: item.barcode, description: item.description || "", qty: qty, prevQty: before ? before.qty : null });
+  }
+
+  // Deletes every document in a collection, 400 per batch; returns how many
+  async function deleteAll(collection, onProgress) {
+    var snap = await db.collection(collection).get();
+    for (var i = 0; i < snap.docs.length; i += 400) {
+      var batch = db.batch();
+      snap.docs.slice(i, i + 400).forEach(function (d) { batch.delete(d.ref); });
+      await batch.commit();
+      if (onProgress) onProgress(Math.min(i + 400, snap.docs.length), snap.docs.length);
+    }
+    return snap.size;
+  }
+
+  // Removes every stored list except keepListId (the one just uploaded, if any).
+  // Lists are only a few documents each, so reading them all is cheap.
+  async function deleteCatalog(keepListId) {
+    var snap = await db.collection("catalog").get();
+    var old = snap.docs.filter(function (d) { return !keepListId || d.data().listId !== keepListId; });
+    for (var i = 0; i < old.length; i += 400) {
+      var batch = db.batch();
+      old.slice(i, i + 400).forEach(function (d) { batch.delete(d.ref); });
+      await batch.commit();
+    }
+  }
+
+  async function fetchAllCounts() {
+    var snap = await db.collection("counts").get();
+    var map = {};
+    snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+    return map;
+  }
+
+  // Admins: starts a new stock check, replacing the current one (oldSession).
+  // onProgress(message) reports each step for long lists.
+  async function importList(rawRows, fileName, oldSession, onProgress) {
+    var rows = prepareRows(rawRows);
+    if (!rows.length) throw err("empty-list", "No rows with a barcode found.");
+    var say = onProgress || function () {};
+    var listId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    var chunks = buildChunks(rows);
+    for (var i = 0; i < chunks.length; i++) {
+      say("Uploading list (" + (i + 1) + " of " + chunks.length + ")…");
+      await db.doc("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
+    }
+    say("Clearing old counts…");
+    await deleteAll("counts");
+    await deleteAll("extras");
+    await deleteAll("products"); // lists saved before this format
+    await db.doc("meta/stats").set({ counted: 0 });
+    await db.doc("meta/session").set({
+      name: String(fileName || "Stock check").replace(/\.[^.]+$/, ""), sourceFileName: fileName || "",
+      totalProducts: rows.length, startedAt: new Date().toISOString(), startedBy: profile.name,
+      listId: listId, listChunks: chunks.length
+    });
+    say("Tidying up…");
+    try { await deleteCatalog(listId); } catch (e) { console.warn("old list cleanup failed", e); }
+    await log("import", { detail: fileName + " · " + plural(rows.length, "product") });
+    return rows.length;
+  }
+
+  // Admins: converts a stock check saved in the old format (one products/
+  // document per item, up to 1,000) to the list format above, keeping its
+  // counts. Safe to run twice: it writes the same documents again, and the old
+  // products/ documents stay until the next import or delete clears them.
+  async function migrateLegacyList(session) {
+    if (!session || session.listId) return false;
+    var snap = await db.collection("products").get();
+    var rows = [], counted = [];
+    snap.docs.forEach(function (d) {
+      var p = d.data();
+      rows.push({ barcode: p.barcode || d.id, description: p.description || "" });
+      if (p.countedQty !== null && p.countedQty !== undefined) counted.push({ id: d.id, p: p });
+    });
+    rows = prepareRows(rows);
+    var listId = "legacy";
+    var chunks = buildChunks(rows);
+    for (var i = 0; i < chunks.length; i++) {
+      await db.doc("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
+    }
+    for (var j = 0; j < counted.length; j += 400) {
+      var batch = db.batch();
+      counted.slice(j, j + 400).forEach(function (c) {
+        batch.set(db.doc("counts/" + c.id), {
+          barcode: c.p.barcode || c.id, description: c.p.description || "", qty: c.p.countedQty,
+          by: c.p.updatedBy || "", byUid: c.p.updatedByUid || profile.uid, at: c.p.updatedAt || new Date().toISOString()
+        });
+      });
+      await batch.commit();
+    }
+    await db.doc("meta/stats").set({ counted: counted.length });
+    await db.doc("meta/session").set({ listId: listId, listChunks: chunks.length, totalProducts: rows.length }, { merge: true });
+    return true;
+  }
+
+  async function resetCounts(onProgress) {
+    var n = await deleteAll("counts", onProgress);
+    await db.doc("meta/stats").set({ counted: 0 });
+    await log("reset_counts", { detail: plural(n, "item") });
+    return n;
+  }
+
   // Admins: removes the product list, every count, the extra items and the
   // stock check details, to start fresh. Staff accounts and the activity log stay.
-  async function deleteStockCheck() {
-    var counts = { products: 0, extras: 0 };
-    var cols = ["products", "extras"];
-    for (var c = 0; c < cols.length; c++) {
-      var snap = await db.collection(cols[c]).get();
-      counts[cols[c]] = snap.size;
-      // Firestore batches hold up to 500 writes
-      for (var i = 0; i < snap.docs.length; i += 400) {
-        var batch = db.batch();
-        snap.docs.slice(i, i + 400).forEach(function (d) { batch.delete(d.ref); });
-        await batch.commit();
-      }
-    }
+  async function deleteStockCheck(session) {
+    var out = { products: session ? session.totalProducts || 0 : 0, extras: 0 };
+    await deleteCatalog();
+    await deleteAll("counts");
+    out.extras = await deleteAll("extras");
+    out.products += await deleteAll("products");
     await db.doc("meta/session").delete();
-    await log("stock_deleted", { detail: plural(counts.products, "product") + " \u00b7 " + plural(counts.extras, "extra item") });
-    return counts;
+    await db.doc("meta/stats").delete();
+    await log("stock_deleted", { detail: plural(out.products, "product") + " · " + plural(out.extras, "extra item") });
+    return out;
   }
 
   /* ---------------- sessions ---------------- */
@@ -193,11 +386,30 @@
     return Object.assign({ uid: uid }, snap.data());
   }
 
+  // ref.onSnapshot(onNext) that reconnects by itself. Firestore stops a live
+  // listener for good after any error; one can fail for a moment right after
+  // signing in (while the new sign-in reaches the server) or on a bad
+  // connection, and the page would then stop updating. Returns unsubscribe.
+  function listen(ref, onNext, onError, options) {
+    var unsub = null, timer = null, stopped = false, delay = 1000;
+    function start() {
+      unsub = ref.onSnapshot(options || {}, function (snap) { delay = 1000; onNext(snap); }, function (e) {
+        if (onError) onError(e);
+        unsub = null;
+        if (stopped || !auth || !auth.currentUser) return;
+        timer = setTimeout(start, delay);
+        delay = Math.min(delay * 2, 30000);
+      });
+    }
+    start();
+    return function () { stopped = true; clearTimeout(timer); if (unsub) unsub(); };
+  }
+
   // Follows the signed-in account's own document, so switching an account
   // off or changing its role takes effect straight away on every device.
   function watchProfile(uid) {
     if (profileUnsub) profileUnsub();
-    profileUnsub = db.doc("users/" + uid).onSnapshot(function (snap) {
+    profileUnsub = listen(db.doc("users/" + uid), function (snap) {
       if (!profile || profile.uid !== uid) return;
       var d = snap.exists ? snap.data() : null;
       if (!d || !d.active) {
@@ -419,6 +631,7 @@
     configured: configured,
     isNative: isNative,
     isDesktopApp: isDesktopApp,
+    listen: listen,
     init: init,
     onAuth: onAuth,
     signIn: signIn,
@@ -431,6 +644,15 @@
     setRole: setRole,
     deleteStockCheck: deleteStockCheck,
     plural: plural,
+    sanitizeId: sanitizeId,
+    MAX_ITEMS: MAX_ITEMS,
+    loadCatalog: loadCatalog,
+    getCount: getCount,
+    saveCount: saveCount,
+    fetchAllCounts: fetchAllCounts,
+    importList: importList,
+    resetCounts: resetCounts,
+    migrateLegacyList: migrateLegacyList,
     changeOwnPassword: changeOwnPassword,
     deleteOwnAccount: deleteOwnAccount,
     log: log,

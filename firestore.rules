@@ -31,7 +31,37 @@ service cloud.firestore {
         && d.description is string && d.description.size() <= 1000;
     }
 
-    // Uploaded product list plus the counted quantity for each item
+    // Product list, stored as a few large text documents ("barcode<TAB>description" lines)
+    match /catalog/{id} {
+      allow read: if isActive();
+      allow create, update: if isAdmin() && request.resource.data.lines is string;
+      allow delete: if isAdmin();
+    }
+
+    // One document per counted item
+    match /counts/{id} {
+      allow read: if isActive();
+      // Admins may keep someone else's name on a count (converting old lists)
+      allow create, update: if (isAdmin() || (isActive() && request.resource.data.byUid == request.auth.uid))
+        && request.resource.data.barcode is string && request.resource.data.barcode.size() <= 200
+        && request.resource.data.qty is int && request.resource.data.qty >= 0;
+      allow delete: if isAdmin();
+    }
+
+    // Running total of counted items: staff can only add one at a time
+    match /meta/stats {
+      allow read: if isActive();
+      allow create: if isAdmin()
+        || (isActive() && request.resource.data.keys().hasOnly(['counted']) && request.resource.data.counted == 1);
+      allow update: if isAdmin()
+        || (isActive() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counted'])
+            && request.resource.data.counted == resource.data.counted + 1);
+      allow delete: if isAdmin();
+    }
+
+    // Product lists saved before the catalog format (read to show, admins clear them)
+    // Staff can still save counts here so copies of the app installed before
+    // the update keep working until they're updated.
     match /products/{id} {
       allow read: if isActive();
       allow create: if isAdmin() && validItem(request.resource.data);

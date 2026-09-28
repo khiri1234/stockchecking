@@ -27,13 +27,26 @@ The first person to open the app after setup creates the admin account.
 
 | Firestore path | Holds |
 |---|---|
-| `products/{barcode}` | `barcode`, `description`, `countedQty` (null until counted), `updatedBy`, `updatedByUid`, `updatedAt` |
+| `catalog/{listId}_{n}` | The product list: `lines`, one `barcode<TAB>description` line per item, split into documents of up to ~700 KB (50,000 items is about 4 documents) |
+| `counts/{barcode}` | Only items someone has counted: `barcode`, `description`, `qty`, `by`, `byUid`, `at` |
 | `extras/{barcode}` | Scanned items not on the list: `barcode`, `description`, `qty`, `addedBy`, `addedByUid`, `addedAt` |
-| `meta/session` | Current stock check: `name`, `sourceFileName`, `totalProducts`, `startedAt`, `startedBy` |
+| `meta/session` | Current stock check: `name`, `sourceFileName`, `totalProducts`, `startedAt`, `startedBy`, `listId`, `listChunks` |
+| `meta/stats` | `counted`: running total for the progress bars (staff may only add 1; an admin's dashboard corrects it from `counts/`) |
+| `products/{barcode}` | Lists saved by earlier versions. An admin's app converts them to `catalog/` + `counts/` automatically, keeping the counts |
 | `meta/setup` | Marks that the first admin exists |
 | `users/{uid}` | `username`, `name`, `role` (`admin`/`staff`), `active`, `createdAt`, `createdBy`, `replacedBy` |
 | `usernames/{username}` | `uid`, `email`: sign-in lookup |
 | `activity/{id}` | Append-only log: `at` (server time), `uid`, `username`, `name`, `action`, plus `barcode`, `description`, `qty`, `prevQty`, `target`, `detail` where relevant |
+
+**Big lists (up to 100,000 items).** Each device downloads the product list
+once per stock check (a handful of reads) and looks barcodes up on the device,
+so lookups are instant and work offline. Phones read one count per scan and
+the running total from `meta/stats`; they never download every count. The
+dashboard follows all of `counts/` live (for its tables and charts), which is
+one read per counted item each time it's opened. With 50,000 items that goes
+past Firestore's free 50,000 reads a day, so switch the project to the
+pay-as-you-go **Blaze** plan for large stock checks (reads cost about $0.06
+per 100,000).
 
 Every open copy listens with `onSnapshot`, so a count saved on one phone
 shows up everywhere straight away. Firestore's offline cache is on, so counts
