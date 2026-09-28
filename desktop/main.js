@@ -1,8 +1,8 @@
-// The H Stock Management for Windows: opens the dashboard in its own window.
+// The H Stock Management for Windows and macOS: opens the dashboard in its own window.
 // Pages are served from the bundled app/ folder over an app:// address, which
 // behaves like a normal website origin (so Firebase sign-in and the offline
 // cache work) while needing no web server.
-const { app, BrowserWindow, protocol, net, shell } = require("electron");
+const { app, BrowserWindow, Menu, nativeTheme, protocol, net, shell } = require("electron");
 const path = require("path");
 const { pathToFileURL } = require("url");
 
@@ -37,6 +37,8 @@ function createWindow() {
     }
   });
   win.once("ready-to-show", () => win.show());
+  // On macOS closing the window leaves the app running in the Dock
+  win.on("closed", () => { win = null; });
 
   // Web links (privacy policy, etc.) open in the normal browser, not in the app
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -59,7 +61,27 @@ app.on("second-instance", () => {
   win.focus();
 });
 
+// macOS always shows a menu bar: keep it to the standard app, edit (copy and
+// paste), view (zoom) and window menus
+function macMenu() {
+  return Menu.buildFromTemplate([
+    { role: "appMenu" },
+    { role: "editMenu" },
+    { label: "View", submenu: [
+      { role: "reload" },
+      { type: "separator" },
+      { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+      { type: "separator" },
+      { role: "togglefullscreen" }
+    ] },
+    { role: "windowMenu" }
+  ]);
+}
+
 app.whenReady().then(() => {
+  // Always light, like the phone app, even when the computer is in dark mode
+  nativeTheme.themeSource = "light";
+  if (process.platform === "darwin") Menu.setApplicationMenu(macMenu());
   protocol.handle("app", (request) => {
     const { pathname } = new URL(request.url);
     const file = path.normalize(path.join(APP_ROOT, decodeURIComponent(pathname)));

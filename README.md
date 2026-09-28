@@ -85,18 +85,35 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its username and password in App Store Connect > App Review Information
 
-## Windows desktop app
+## Desktop apps (Windows and macOS)
 
 `desktop/` is an Electron app that opens the dashboard in its own window
 (`app://stockcheck/dashboard.html`, served from the bundled files; Firebase
 still syncs online). Web links open in the normal browser.
 
-- **Download:** every change to the app runs the **Windows desktop app**
-  workflow (Actions tab). Open the latest run and download
-  **The-H-Stock-Management-Windows** under *Artifacts*; it contains
-  `The-H-Stock-Management-Setup-x.y.z.exe`. The workflow can also be run by
-  hand (Actions > Windows desktop app > Run workflow).
-- **Install:** run the setup file. It isn't code-signed yet, so Windows may
-  show "Windows protected your PC": click **More info > Run anyway**.
+Every change to the app runs the **Desktop apps** workflow (Actions tab). Open
+the latest run and download from *Artifacts*. It can also be run by hand
+(Actions > Desktop apps > Run workflow).
+
+- **Windows:** **The-H-Stock-Management-Windows** contains
+  `The-H-Stock-Management-Setup-x.y.z.exe`. It isn't code-signed yet, so
+  Windows may show "Windows protected your PC": click **More info > Run anyway**.
+- **macOS:** **The-H-Stock-Management-Mac** contains
+  `The-H-Stock-Management-x.y.z-mac.dmg` (one app for Apple Silicon and Intel,
+  macOS 12 or later). Open it and drag the app into Applications.
+  - Unsigned build (no secrets set): the first open is blocked. Open System
+    Settings > Privacy & Security, scroll down and click **Open Anyway**.
+  - Signed build: add these repository secrets (Settings > Secrets and
+    variables > Actions) and the next run signs and notarizes the app, so it
+    opens without warnings:
+    - `MAC_CERTIFICATE`: a *Developer ID Application* certificate exported
+      from Keychain Access as .p12, base64 encoded (`base64 -i cert.p12 | pbcopy`)
+    - `MAC_CERTIFICATE_PASSWORD`: the password chosen when exporting
+    - `APPLE_ID`: the Apple Account email of the developer account
+    - `APPLE_APP_SPECIFIC_PASSWORD`: made at account.apple.com > Sign-In and
+      Security > App-Specific Passwords
+    - `APPLE_TEAM_ID`: the 10-character Team ID (developer.apple.com > Account)
+  - Build on a Mac instead: `cd desktop && npm install && npm run dist:mac`
+    (uses the Developer ID certificate in the keychain if there is one).
 - **Run locally:** `npm install`, then `cd desktop && npm install && npm start`.
 - **Version:** `version` in `desktop/package.json`.
