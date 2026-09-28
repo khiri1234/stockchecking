@@ -428,14 +428,25 @@
       ? [["name", "Your name", "text", "name"], ["username", "Username", "text", "username"], ["password", "Password (6+ characters)", "password", "new-password"], ["confirm", "Repeat password", "password", "new-password"]]
       : [["username", "Username", "text", "username"], ["password", "Password", "password", "current-password"]];
     var form = el("form");
-    fields.forEach(function (f) {
-      inputs[f[0]] = el("input", { type: f[2], name: f[0], autocomplete: f[3], autocapitalize: "none", spellcheck: "false", required: "required" });
+    fields.forEach(function (f, i) {
+      inputs[f[0]] = el("input", { type: f[2], name: f[0], autocomplete: f[3], autocapitalize: "none", spellcheck: "false", required: "required",
+        enterkeyhint: i === fields.length - 1 ? "go" : "next" });
       form.appendChild(el("label", { class: "field" }, [el("span", { text: f[1] }), inputs[f[0]]]));
     });
     var errorBox = el("div", { class: "form-error", role: "alert", text: message || "" });
     var submit = el("button", { type: "submit", class: "btn btn-primary btn-block", text: mode === "setup" ? "Create admin account" : "Sign in" });
     form.appendChild(errorBox);
     form.appendChild(submit);
+    // No mouse needed: Enter moves to the next empty box, and signs in from the last one
+    form.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || e.target.tagName !== "INPUT") return;
+      e.preventDefault();
+      var boxes = Array.prototype.slice.call(form.querySelectorAll("input"));
+      var next = boxes.slice(boxes.indexOf(e.target) + 1).filter(function (b) { return !b.value; })[0]
+        || boxes.filter(function (b) { return !b.value; })[0];
+      if (next) next.focus();
+      else if (!submit.disabled) form.requestSubmit(submit);
+    });
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
       errorBox.textContent = "";
@@ -443,13 +454,20 @@
         if (!inputs.name.value.trim()) { errorBox.textContent = "Enter your name."; return; }
         if (inputs.password.value !== inputs.confirm.value) { errorBox.textContent = "The passwords don't match."; return; }
       }
+      var label = submit.textContent;
       submit.disabled = true;
+      submit.textContent = mode === "setup" ? "Creating account…" : "Signing in…";
       try {
         if (mode === "setup") await SC.setupFirstAdmin(inputs.name.value, inputs.username.value, inputs.password.value);
         else await SC.signIn(inputs.username.value, inputs.password.value);
       } catch (err) {
         errorBox.textContent = SC.friendlyError(err);
         submit.disabled = false;
+        submit.textContent = label;
+        // Wrong password: clear it and put the cursor back, ready to retype
+        if (mode !== "setup" && /^auth\/(wrong-password|invalid-credential|invalid-login-credentials|user-not-found)$/.test(err && err.code)) {
+          inputs.password.value = ""; inputs.password.focus();
+        }
       }
     });
     root.appendChild(el("div", { class: "auth-card" }, [
@@ -1466,7 +1484,9 @@
     }
     state.db = fb.db;
     var authHeard = false;
-    SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); });
+    SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); },
+      // Signed in from last time: wait for it rather than showing the sign-in screen
+      function () { authHeard = true; });
     // If the sign-in service is slow to answer, show the sign-in screen anyway
     setTimeout(function () { if (!authHeard && !state.user) showAuthScreen(""); }, 4000);
   })();

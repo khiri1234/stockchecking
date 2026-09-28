@@ -213,8 +213,29 @@
     }, function () {});
   }
 
-  // cb(profile) when signed in with an active account, cb(null, error?) otherwise
-  function onAuth(cb) {
+  // After a refresh or restart the saved sign-in comes back before the
+  // connection is up. Reading the account record can then fail for a moment;
+  // that must not sign the person out. Falls back to the offline copy and
+  // keeps retrying. Resolves null only when the record really doesn't exist.
+  async function restoreProfile(u) {
+    for (var attempt = 0; ; attempt++) {
+      try { return await withTimeout(loadProfile(u.uid), 10000); } catch (e) {
+        // The server turned this sign-in down (account removed): not a connection problem
+        if (e && (e.code === "permission-denied" || e.code === "unauthenticated")) return null;
+        console.warn("profile load failed", e);
+      }
+      try {
+        var cached = await db.doc("users/" + u.uid).get({ source: "cache" });
+        if (cached.exists) return Object.assign({ uid: u.uid }, cached.data());
+      } catch (e) {}
+      if (auth.currentUser !== u) throw err("signed-out");
+      await new Promise(function (r) { setTimeout(r, Math.min(2000 * (attempt + 1), 10000)); });
+    }
+  }
+
+  // cb(profile) when signed in with an active account, cb(null, error?) otherwise.
+  // onRestoring() runs when a saved sign-in is found and is being checked.
+  function onAuth(cb, onRestoring) {
     authCb = cb;
     return auth.onAuthStateChanged(async function (u) {
       if (holdAuth) return;
@@ -222,8 +243,11 @@
         if (profileUnsub) { profileUnsub(); profileUnsub = null; }
         profile = null; cb(null); return;
       }
+      // signIn() already opened the app for this account
+      if (profile && profile.uid === u.uid) return;
+      if (onRestoring) onRestoring();
       var p = null;
-      try { p = await loadProfile(u.uid); } catch (e) { console.warn("profile load failed", e); }
+      try { p = await restoreProfile(u); } catch (e) { return; }
       if (!p || !p.active) {
         profile = null;
         await auth.signOut();

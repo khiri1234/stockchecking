@@ -36,7 +36,8 @@ function createWindow() {
       nodeIntegration: false
     }
   });
-  win.once("ready-to-show", () => win.show());
+  // Focus straight away so people can type their username without clicking
+  win.once("ready-to-show", () => { win.show(); win.focus(); });
   // On macOS closing the window leaves the app running in the Dock
   win.on("closed", () => { win = null; });
 
