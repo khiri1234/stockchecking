@@ -45,20 +45,39 @@ await t('admin lists users', assertSucceeds(getDocs(collection(alice, 'users')))
 await t('admin deactivates', assertSucceeds(updateDoc(doc(alice, 'users/carl'), { active: false })));
 await t('admin cannot rename username', assertFails(updateDoc(doc(alice, 'users/carl'), { username: 'carlos' })));
 
-// --- products ---
-await t('admin creates product', assertSucceeds(setDoc(doc(alice, 'products/123'), { barcode: '123', description: 'Milk', countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null })));
-await t('staff cannot create product', assertFails(setDoc(doc(bob, 'products/999'), { barcode: '999', description: 'X', countedQty: null })));
-await t('staff reads products', assertSucceeds(getDoc(doc(bob, 'products/123'))));
-await t('no-profile user cannot read products', assertFails(getDoc(doc(eve, 'products/123'))));
-await t('inactive user cannot read products', assertFails(getDoc(doc(carl, 'products/123'))));
-await t('anon cannot read products', assertFails(getDoc(doc(anon, 'products/123'))));
-await t('staff saves count', assertSucceeds(updateDoc(doc(bob, 'products/123'), { countedQty: 5, updatedBy: 'Bob', updatedByUid: 'bob', updatedAt: 'x' })));
-await t('staff cannot spoof uid', assertFails(updateDoc(doc(bob, 'products/123'), { countedQty: 6, updatedBy: 'Alice', updatedByUid: 'alice', updatedAt: 'x' })));
-await t('staff cannot change description', assertFails(updateDoc(doc(bob, 'products/123'), { description: 'Beer', countedQty: 6, updatedByUid: 'bob' })));
-await t('staff cannot set non-int qty', assertFails(updateDoc(doc(bob, 'products/123'), { countedQty: 'lots', updatedByUid: 'bob' })));
-await t('staff cannot delete product', assertFails(deleteDoc(doc(bob, 'products/123'))));
-await t('admin resets count', assertSucceeds(updateDoc(doc(alice, 'products/123'), { countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null })));
-await t('admin deletes product', assertSucceeds(deleteDoc(doc(alice, 'products/123'))));
+// --- product list (catalog chunks) ---
+await t('admin writes list chunk', assertSucceeds(setDoc(doc(alice, 'catalog/L1_0'), { listId: 'L1', n: 0, lines: '123\tMilk\n456\tBread' })));
+await t('staff cannot write list', assertFails(setDoc(doc(bob, 'catalog/L1_1'), { listId: 'L1', n: 1, lines: 'x' })));
+await t('staff reads list', assertSucceeds(getDoc(doc(bob, 'catalog/L1_0'))));
+await t('no-profile user cannot read list', assertFails(getDoc(doc(eve, 'catalog/L1_0'))));
+await t('inactive user cannot read list', assertFails(getDoc(doc(carl, 'catalog/L1_0'))));
+await t('anon cannot read list', assertFails(getDoc(doc(anon, 'catalog/L1_0'))));
+
+// --- counts ---
+await t('staff saves count', assertSucceeds(setDoc(doc(bob, 'counts/123'), { barcode: '123', description: 'Milk', qty: 5, by: 'Bob', byUid: 'bob', at: 'x' })));
+await t('staff cannot spoof uid', assertFails(setDoc(doc(bob, 'counts/123'), { barcode: '123', description: 'Milk', qty: 6, by: 'Alice', byUid: 'alice', at: 'x' })));
+await t('staff cannot set non-int qty', assertFails(setDoc(doc(bob, 'counts/123'), { barcode: '123', qty: 'lots', byUid: 'bob' })));
+await t('negative qty rejected', assertFails(setDoc(doc(bob, 'counts/123'), { barcode: '123', qty: -1, byUid: 'bob' })));
+await t('inactive cannot count', assertFails(setDoc(doc(carl, 'counts/456'), { barcode: '456', qty: 1, byUid: 'carl' })));
+await t('admin keeps another counter on a count', assertSucceeds(setDoc(doc(alice, 'counts/789'), { barcode: '789', description: 'Eggs', qty: 3, by: 'Bob', byUid: 'bob', at: 'x' })));
+await t('admin still needs a whole qty', assertFails(setDoc(doc(alice, 'counts/789'), { barcode: '789', qty: -2, byUid: 'bob' })));
+await t('staff cannot delete count', assertFails(deleteDoc(doc(bob, 'counts/123'))));
+await t('admin deletes count', assertSucceeds(deleteDoc(doc(alice, 'counts/123'))));
+
+// --- running total ---
+await t('staff creates total at 1', assertSucceeds(setDoc(doc(bob, 'meta/stats'), { counted: 1 })));
+await t('staff adds one', assertSucceeds(setDoc(doc(bob, 'meta/stats'), { counted: 2 })));
+await t('staff cannot jump the total', assertFails(setDoc(doc(bob, 'meta/stats'), { counted: 50 })));
+await t('staff cannot lower the total', assertFails(setDoc(doc(bob, 'meta/stats'), { counted: 1 })));
+await t('admin sets total', assertSucceeds(setDoc(doc(alice, 'meta/stats'), { counted: 0 })));
+await t('staff reads total', assertSucceeds(getDoc(doc(bob, 'meta/stats'))));
+
+// --- old-format product lists ---
+await t('staff cannot write old products', assertFails(setDoc(doc(bob, 'products/9'), { barcode: '9', description: 'X' })));
+await t('admin writes old product', assertSucceeds(setDoc(doc(alice, 'products/9'), { barcode: '9', description: 'X', countedQty: null })));
+await t('older app: staff counts old product', assertSucceeds(updateDoc(doc(bob, 'products/9'), { countedQty: 4, updatedBy: 'Bob', updatedByUid: 'bob', updatedAt: 'x' })));
+await t('older app: staff cannot rename old product', assertFails(updateDoc(doc(bob, 'products/9'), { description: 'Y', updatedByUid: 'bob' })));
+await t('admin clears old products', assertSucceeds(deleteDoc(doc(alice, 'products/9'))));
 
 // --- extras ---
 await t('staff adds extra', assertSucceeds(setDoc(doc(bob, 'extras/555'), { barcode: '555', description: 'Found', qty: 2, addedBy: 'Bob', addedByUid: 'bob', addedAt: 'x' })));

@@ -285,7 +285,6 @@
 (function () {
   "use strict";
 
-  var MAX_PRODUCTS = 1000;
   var state = {
     db: null,
     user: null,
@@ -295,9 +294,14 @@
     extras: {},
     users: [],          // admins only
     activity: [],       // admins only, newest first
-    loaded: { products: false, activity: false, users: false },
+    loaded: { products: false, counts: false, activity: false, users: false },
+    catalog: null,       // { listId, items: id -> { barcode, description }, order: [id] }
+    catalogLoading: false,
+    catalogError: "",
+    counts: {},          // id -> { barcode, description, qty, by, byUid, at }
+    statsCounted: null,  // meta/stats.counted
     currentScan: null,
-    items: { search: "", filter: "all" },
+    items: { search: "", filter: "all", limit: 200 },
     log: { search: "", who: "", action: "", range: "7" },
     importState: null
   };
@@ -336,14 +340,8 @@
     (children || []).forEach(function (c) { if (c !== null && c !== undefined) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
-  function sanitizeId(raw) {
-    var s = String(raw == null ? "" : raw).trim();
-    s = s.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
-    if (s.length > 190) s = s.slice(0, 190);
-    if (!s) s = "item_" + Math.random().toString(36).slice(2, 10);
-    if (/^\.\.?$/.test(s) || /^__.*__$/.test(s)) s = "id_" + s;
-    return s;
-  }
+  // Same barcode -> document ID mapping everywhere (see common.js)
+  function sanitizeId(raw) { return SC.sanitizeId(raw); }
   function nowIso() { return new Date().toISOString(); }
   function toDate(v) {
     if (!v) return null;
@@ -381,19 +379,6 @@
     t.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2400);
-  }
-  async function withConcurrency(items, limit, fn) {
-    var i = 0, failures = 0;
-    async function worker() {
-      while (i < items.length) {
-        var idx = i++;
-        try { await fn(items[idx], idx); } catch (e) { failures++; }
-      }
-    }
-    var workers = [];
-    for (var w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
-    await Promise.all(workers);
-    return failures;
   }
   function download(filename, aoa, sheetName) {
     var wb = XLSX.utils.book_new();
@@ -512,26 +497,37 @@
     var live = $("#liveBadge");
     function ok() { live.className = "live"; live.textContent = "Live"; }
     function bad(e) { console.warn(e); live.className = "live off"; live.textContent = "Offline"; }
-    unsubs.push(db.doc("meta/session").onSnapshot(function (s) {
-      state.session = s.exists ? s.data() : null; ok(); renderSessionLine(); refresh(["overview", "stock", "items"]);
-    }, bad));
-    unsubs.push(db.collection("products").orderBy("barcode").limit(MAX_PRODUCTS).onSnapshot(function (snap) {
+    // The product list loads once per stock check; counts stream in live and
+    // are merged into state.products for the tables and charts.
+    // Loads the list only once the server has confirmed the stock check: reading
+    // it while this device's own new stock check is still being saved can leave
+    // the stock check looking deleted until the page is reopened.
+    unsubs.push(SC.listen(db.doc("meta/session"), function (s) {
+      state.session = s.exists ? s.data() : null; ok();
+      if (!s.metadata.hasPendingWrites) loadCatalog();
+      renderSessionLine(); refresh(["overview", "stock", "items"]);
+    }, bad, { includeMetadataChanges: true }));
+    unsubs.push(SC.listen(db.collection("counts"), function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
-      state.products = map; state.loaded.products = true; ok();
-      renderSessionLine(); refresh(["overview", "items", "stock", "count"]);
+      state.counts = map; state.loaded.counts = true; ok();
+      rebuildProducts();
     }, bad));
-    unsubs.push(db.collection("extras").limit(500).onSnapshot(function (snap) {
+    unsubs.push(SC.listen(db.doc("meta/stats"), function (s) {
+      state.statsCounted = s.exists ? s.data().counted || 0 : 0;
+      checkRunningTotal();
+    }, bad));
+    unsubs.push(SC.listen(db.collection("extras").limit(500), function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.extras = map; refresh(["overview", "items"]);
     }, bad));
     if (isAdmin()) {
-      unsubs.push(db.collection("users").onSnapshot(function (snap) {
+      unsubs.push(SC.listen(db.collection("users"), function (snap) {
         state.users = snap.docs.map(function (d) { return Object.assign({ uid: d.id }, d.data()); });
         state.loaded.users = true; refresh(["staff", "activity"]);
       }, bad));
-      unsubs.push(db.collection("activity").orderBy("at", "desc").limit(500).onSnapshot(function (snap) {
+      unsubs.push(SC.listen(db.collection("activity").orderBy("at", "desc").limit(500), function (snap) {
         state.activity = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data({ serverTimestamps: "estimate" })); });
         state.loaded.activity = true; refresh(["overview", "activity", "staff"]);
       }, bad));
@@ -541,7 +537,71 @@
     unsubs.forEach(function (u) { u(); });
     unsubs = [];
     state.session = null; state.products = {}; state.extras = {}; state.users = []; state.activity = [];
-    state.loaded = { products: false, activity: false, users: false };
+    state.catalog = null; state.catalogError = ""; state.counts = {}; state.statsCounted = null;
+    state.loaded = { products: false, counts: false, activity: false, users: false };
+  }
+
+  function loadCatalog() {
+    var s = state.session;
+    if (s && !s.listId && isAdmin()) migrateOldList();
+    if (!s || !s.listId) { state.catalog = null; rebuildProducts(); return; }
+    if (state.catalog && state.catalog.listId === s.listId) return;
+    state.catalogLoading = true;
+    renderSessionLine();
+    SC.loadCatalog(s).then(function (cat) {
+      if (!state.session || state.session.listId !== s.listId) return;
+      state.catalog = { listId: s.listId, items: cat.items, order: cat.order };
+      state.catalogError = "";
+    }).catch(function (e) {
+      state.catalogError = SC.friendlyError(e);
+    }).then(function () {
+      state.catalogLoading = false;
+      rebuildProducts();
+    });
+  }
+
+  // A stock check saved by the previous version: convert it once, keeping its counts
+  var migrating = false;
+  function migrateOldList() {
+    if (migrating) return;
+    migrating = true;
+    toast("Updating the stock check to the new format…");
+    SC.migrateLegacyList(state.session).then(function (done) {
+      if (done) toast("Stock check updated");
+    }).catch(function (e) {
+      console.warn("list conversion failed", e);
+      toast("Couldn't update the stock check: " + SC.friendlyError(e));
+    }).then(function () { migrating = false; });
+  }
+
+  // state.products: id -> { barcode, description, countedQty, updatedBy, updatedByUid, updatedAt }
+  function rebuildProducts() {
+    var map = {}, cat = state.catalog, counts = state.counts || {};
+    if (cat) {
+      cat.order.forEach(function (id) {
+        var it = cat.items[id], c = counts[id];
+        map[id] = { barcode: it.barcode, description: it.description,
+          countedQty: c ? c.qty : null, updatedBy: c ? c.by : null, updatedByUid: c ? c.byUid : null, updatedAt: c ? c.at : null };
+      });
+    }
+    state.products = map;
+    state.loaded.products = !state.catalogLoading && (!!cat || !(state.session && state.session.listId));
+    renderSessionLine();
+    refresh(["overview", "items", "stock", "count", "staff"]);
+    checkRunningTotal();
+  }
+
+  // Phones show progress from meta/stats. If it drifts (two people counting the
+  // same new item at once, or a count saved offline), an admin's dashboard
+  // corrects it from the actual counts.
+  var totalFixTimer = null;
+  function checkRunningTotal() {
+    clearTimeout(totalFixTimer);
+    if (!isAdmin() || !state.loaded.counts || state.statsCounted === null || !state.session || !state.session.listId) return;
+    totalFixTimer = setTimeout(function () {
+      var actual = Object.keys(state.counts).length;
+      if (state.statsCounted !== actual) state.db.doc("meta/stats").set({ counted: actual }).catch(function () {});
+    }, 4000);
   }
 
   // Re-render the current page when its data changes, unless someone is typing in it
@@ -567,9 +627,14 @@
 
   function renderSessionLine() {
     var s = state.session, st = stats();
-    $("#sessionLine").textContent = s
-      ? (s.name || "Stock check") + " · started " + fmtWhen(s.startedAt) + (s.startedBy ? " by " + s.startedBy : "") + " · " + st.counted + " of " + st.total + " counted"
-      : (state.loaded.products ? "No stock check running" + (isAdmin() ? " — start one under Stock check" : "") : "Loading…");
+    var line;
+    if (!s) line = state.loaded.counts ? "No stock check running" + (isAdmin() ? " \u2014 start one under Stock check" : "") : "Loading\u2026";
+    else if (!s.listId) line = "This list was saved in an older format" + (isAdmin() ? " \u2014 upload it again under Stock check" : "");
+    else if (state.catalogLoading) line = (s.name || "Stock check") + " \u00b7 loading " + (s.totalProducts || 0).toLocaleString() + " items\u2026";
+    else if (state.catalogError) line = (s.name || "Stock check") + " \u00b7 " + state.catalogError;
+    else line = (s.name || "Stock check") + " \u00b7 started " + fmtWhen(s.startedAt) + (s.startedBy ? " by " + s.startedBy : "") +
+      " \u00b7 " + st.counted.toLocaleString() + " of " + st.total.toLocaleString() + " counted";
+    $("#sessionLine").textContent = line;
   }
 
   /* ---------------- navigation ---------------- */
@@ -851,14 +916,9 @@
     var id = sanitizeId(code);
     var input = $("#countInput");
     if (input) input.value = "";
+    if (!state.catalog && state.catalogLoading) { toast("The product list is still loading \u2014 try again in a moment"); return; }
+    // The whole list and every count are already loaded: no lookups needed
     var product = state.products[id], extra = state.extras[id];
-    if (!product && !extra) {
-      try {
-        var snap = await state.db.doc("products/" + id).get();
-        if (snap.exists) product = snap.data();
-        else { var es = await state.db.doc("extras/" + id).get(); if (es.exists) extra = es.data(); }
-      } catch (e) {}
-    }
     state.currentScan = { id: id, barcode: code, product: product || null, extra: extra || null };
     if (state.page !== "count") go("count"); else renderCountCard();
   }
@@ -912,15 +972,18 @@
     q.input.select();
   }
 
+  var savingIds = {};
   async function saveCount(id, p, qty) {
     if (qty === null) { toast("Enter a quantity"); return; }
+    if (savingIds[id]) return; // a double click must not count the item twice
+    savingIds[id] = true;
     try {
-      await state.db.doc("products/" + id).update({ countedQty: qty, updatedBy: state.user.name, updatedByUid: state.user.uid, updatedAt: nowIso() });
+      await SC.saveCount({ id: id, barcode: p.barcode || id, description: p.description || "" }, qty, state.counts[id] || null);
       toast("Saved: " + qty);
-      SC.log("count_saved", { barcode: p.barcode || id, description: p.description || "", qty: qty, prevQty: isCounted(p) ? p.countedQty : null });
       state.currentScan = null;
       if (state.page === "count") renderPage();
     } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
+    finally { delete savingIds[id]; }
   }
 
   async function saveExtra(id, barcode, description, qty, before) {
@@ -935,13 +998,14 @@
   }
 
   /* ---------------- items ---------------- */
+  var PAGE = 200; // rows per page: tables with 50,000 rows would be too slow
   function renderItems(root) {
     var search = el("input", { class: "input grow", type: "search", placeholder: "Search barcode or description", value: state.items.search, id: "itemSearch" });
-    search.addEventListener("input", function () { state.items.search = search.value; renderItemsTable(); });
+    search.addEventListener("input", function () { state.items.search = search.value; state.items.limit = PAGE; renderItemsTable(); });
     var seg = el("div", { class: "seg", role: "tablist" });
     [["all", "All"], ["pending", "Not counted"], ["counted", "Counted"], ["extras", "Extra items"]].forEach(function (f) {
       var b = el("button", { type: "button", class: state.items.filter === f[0] ? "active" : "", text: f[1] });
-      b.addEventListener("click", function () { state.items.filter = f[0]; renderPage(); });
+      b.addEventListener("click", function () { state.items.filter = f[0]; state.items.limit = PAGE; renderPage(); });
       seg.appendChild(b);
     });
     var bar = el("div", { class: "toolbar" }, [search, seg]);
@@ -977,7 +1041,7 @@
         return match(p);
       });
       var tbody = el("tbody");
-      rows.forEach(function (p) {
+      rows.slice(0, state.items.limit).forEach(function (p) {
         var c = isCounted(p);
         var qtyTd = el("td", { class: "r" });
         var qb = el("button", { type: "button", class: "qty-btn qty-cell" + (c ? "" : " dash"), text: c ? String(p.countedQty) : "—", title: "Click to enter a count" });
@@ -998,7 +1062,14 @@
     if (!rows.length) scroll.appendChild(el("div", { class: "empty", text: q ? "No items match “" + state.items.search + "”." : "Nothing here." }));
     else scroll.appendChild(table);
     var st = stats();
-    $("#itemsFoot").textContent = rows.length + " shown · " + st.counted + " of " + st.total + " counted · " + st.extras + " extra items";
+    var shownN = state.items.filter === "extras" ? rows.length : Math.min(rows.length, state.items.limit);
+    if (shownN < rows.length) {
+      scroll.appendChild(el("div", { style: "padding:14px;text-align:center" }, [el("button", { class: "btn btn-secondary", type: "button",
+        text: "Show " + Math.min(PAGE, rows.length - shownN).toLocaleString() + " more",
+        onclick: function () { state.items.limit += PAGE; renderItemsTable(); } })]));
+    }
+    $("#itemsFoot").textContent = "Showing " + shownN.toLocaleString() + " of " + rows.length.toLocaleString() + " \u00b7 " +
+      st.counted.toLocaleString() + " of " + st.total.toLocaleString() + " counted \u00b7 " + SC.plural(st.extras, "extra item");
   }
 
   function editQty(td, p) {
@@ -1310,7 +1381,7 @@
       return el("label", {}, [label, sel]);
     }
     holder.appendChild(el("div", { class: "map-row" }, [colSelect("Barcode column", "barcodeCol"), colSelect("Description column", "descCol")]));
-    if (im.rows.length > MAX_PRODUCTS) holder.appendChild(el("div", { class: "banner", text: "This file has " + im.rows.length + " rows. Only the first " + MAX_PRODUCTS + " will be imported." }));
+    if (im.rows.length > SC.MAX_ITEMS) holder.appendChild(el("div", { class: "banner", text: "This file has " + im.rows.length.toLocaleString() + " rows. Only the first " + SC.MAX_ITEMS.toLocaleString() + " will be imported." }));
     var t = el("table", { class: "data" }, [el("thead", {}, [el("tr", {}, [el("th", { text: "Barcode" }), el("th", { text: "Description" })])])]);
     var tb = el("tbody");
     im.rows.slice(0, 5).forEach(function (r) { tb.appendChild(el("tr", {}, [el("td", { class: "mono", text: r[im.barcodeCol] || "" }), el("td", { text: r[im.descCol] || "" })])); });
@@ -1322,59 +1393,51 @@
     ]));
   }
 
+  var busy = false;
   async function confirmImport() {
     var im = state.importState;
-    if (!im) return;
+    if (!im || busy) return;
     if (!window.confirm("Start a new stock check? The current list and all its counts will be replaced.")) return;
-    var seen = {};
-    var rows = im.rows.slice(0, MAX_PRODUCTS).map(function (r) {
-      return { barcode: String(r[im.barcodeCol] || "").trim(), description: String(r[im.descCol] || "").trim() };
-    }).filter(function (r) {
-      if (!r.barcode) return false;
-      var id = sanitizeId(r.barcode);
-      if (seen[id]) return false;
-      seen[id] = true;
-      return true;
-    });
-    if (!rows.length) { toast("No rows with a barcode found"); return; }
-    toast("Importing " + rows.length + " products…");
-    var failed = await withConcurrency(Object.keys(state.products), 12, function (id) { return state.db.doc("products/" + id).delete(); });
-    failed += await withConcurrency(rows, 12, function (r) {
-      return state.db.doc("products/" + sanitizeId(r.barcode)).set({ barcode: r.barcode, description: r.description, countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null });
-    });
+    busy = true;
+    var rows = im.rows.map(function (r) { return { barcode: r[im.barcodeCol], description: r[im.descCol] }; });
     try {
-      await state.db.doc("meta/session").set({ name: im.fileName.replace(/\.[^.]+$/, ""), sourceFileName: im.fileName, totalProducts: rows.length, startedAt: nowIso(), startedBy: state.user.name });
-    } catch (e) { failed++; }
-    SC.log("import", { detail: im.fileName + " · " + rows.length + " products" });
-    state.importState = null;
-    toast(failed ? "Imported with " + failed + " errors — check your connection and try again" : "Stock check started with " + rows.length + " products");
-    go("overview");
+      var n = await SC.importList(rows, im.fileName, state.session, toast);
+      state.importState = null;
+      toast("Stock check started with " + n.toLocaleString() + " products");
+      // The list shows up before the last clean-up step: don't pull people back if they've moved on
+      if (state.page === "stock") go("overview");
+    } catch (e) {
+      toast("Import failed: " + SC.friendlyError(e));
+    } finally { busy = false; }
   }
 
   async function resetCounts() {
-    var ids = Object.keys(state.products).filter(function (id) { return isCounted(state.products[id]); });
-    if (!ids.length) { toast("Nothing to reset"); return; }
-    if (!window.confirm("Clear the counted quantity on all " + ids.length + " counted items? The product list stays.")) return;
-    var failed = await withConcurrency(ids, 12, function (id) {
-      return state.db.doc("products/" + id).update({ countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null });
-    });
-    SC.log("reset_counts", { detail: ids.length + " items" });
-    toast(failed ? failed + " items couldn't be reset" : "Counts reset");
+    var n = Object.keys(state.counts).length;
+    if (!n || busy) { if (!n) toast("Nothing to reset"); return; }
+    if (!window.confirm("Clear the counted quantity on all " + n.toLocaleString() + " counted items? The product list stays.")) return;
+    busy = true;
+    try {
+      await SC.resetCounts(function (done, total) { toast("Resetting " + done.toLocaleString() + " of " + total.toLocaleString() + "\u2026"); });
+      toast("Counts reset");
+    } catch (e) {
+      toast("Couldn't reset: " + SC.friendlyError(e));
+    } finally { busy = false; }
   }
 
   function deleteStockModal() {
     var st = stats();
-    if (!state.session && !Object.keys(state.products).length && !st.extras) { toast("There's no stock check to delete"); return; }
+    if (!state.session && !st.extras) { toast("There's no stock check to delete"); return; }
     formModal({
       title: "Delete stock check",
-      text: "This permanently deletes the product list (" + SC.plural(Object.keys(state.products).length, "item") + "), all counts and " +
+      text: "This permanently deletes the product list (" + SC.plural(st.total, "item") + "), all counts and " +
         SC.plural(st.extras, "extra item") + ", so you can start fresh. Staff accounts and the activity log are kept. Export the results first if you need them. Type DELETE to confirm.",
       fields: [{ name: "confirm", label: "Type DELETE", autocomplete: "off" }],
       submitLabel: "Delete stock check",
       danger: true,
       onSubmit: async function (v) {
         if (v.confirm.trim().toUpperCase() !== "DELETE") throw new Error("Type DELETE to confirm.");
-        var n = await SC.deleteStockCheck();
+        toast("Deleting\u2026");
+        var n = await SC.deleteStockCheck(state.session);
         state.currentScan = null;
         state.importState = null;
         toast("Deleted " + SC.plural(n.products, "product") + " and " + SC.plural(n.extras, "extra item"));

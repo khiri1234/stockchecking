@@ -351,16 +351,18 @@
     user: null,             // signed-in profile { uid, username, name, role }
     staffName: "",
     session: null,          // meta/session doc data
-    products: {},           // id -> product data (from live query, capped at 1000)
-    productsLoaded: false,
+    catalog: null,          // { listId, items: id -> { barcode, description }, order: [id] }
+    catalogLoading: false,
+    catalogError: "",
+    counted: 0,             // running total from meta/stats
+    recent: [],             // latest counts, newest first
     extras: {},             // id -> extra item data
     activeTab: "scan",
     currentScan: null,      // { id, barcode, existing product|extra or null }
-    listFilter: "all",      // all | counted | pending
+    listFilter: "all",      // all | recent
     listSearch: "",
   };
 
-  var MAX_PRODUCTS = 1000;
 
   /* ---------------------------------------------------------------
    * Small utilities
@@ -383,15 +385,8 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
-  function sanitizeId(raw) {
-    var s = String(raw == null ? "" : raw).trim();
-    s = s.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
-    if (s.length > 190) s = s.slice(0, 190);
-    if (!s) s = "item_" + Math.random().toString(36).slice(2, 10);
-    // Firestore rejects "." / ".." and ids of the form __x__ as document ids
-    if (/^\.\.?$/.test(s) || /^__.*__$/.test(s)) s = "id_" + s;
-    return s;
-  }
+  // Same barcode -> document ID mapping everywhere (see common.js)
+  function sanitizeId(raw) { return SC.sanitizeId(raw); }
   function nowIso() { return new Date().toISOString(); }
   function fmtWhen(iso) {
     if (!iso) return "";
@@ -411,22 +406,6 @@
   }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-
-  async function withConcurrency(items, limit, fn) {
-    var results = [];
-    var i = 0;
-    async function worker() {
-      while (i < items.length) {
-        var idx = i++;
-        try { results[idx] = await fn(items[idx], idx); }
-        catch (e) { results[idx] = { __error: e }; }
-      }
-    }
-    var workers = [];
-    for (var w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
-    await Promise.all(workers);
-    return results;
-  }
 
   /* ---------------------------------------------------------------
    * Platform helpers
@@ -710,54 +689,96 @@
 
   /* ---------------------------------------------------------------
    * DB subscriptions (only while signed in)
+   * The product list loads once (a few large documents), barcodes are looked
+   * up locally, and progress comes from meta/stats, so this stays fast with
+   * 50,000+ items.
    * ------------------------------------------------------------- */
   var unsubs = [];
   function startSync() {
     if (unsubs.length || !state.dbApi) return;
-    unsubs = [subscribeSession(), subscribeProducts(), subscribeExtras()];
+    unsubs = [subscribeSession(), subscribeStats(), subscribeRecent(), subscribeExtras()];
   }
   function stopSync() {
     unsubs.forEach(function (u) { if (u) u(); });
     unsubs = [];
     state.session = null;
-    state.products = {};
+    state.catalog = null;
+    state.catalogError = "";
+    state.counted = 0;
+    state.recent = [];
     state.extras = {};
     state.currentScan = null;
   }
 
   function subscribeSession() {
-    return state.dbApi.doc("meta/session").onSnapshot(function (snap) {
+    // Loads the list only once the server has confirmed the stock check: reading
+    // it while this device's own new stock check is still being saved can leave
+    // the stock check looking deleted until the app is reopened.
+    return SC.listen(state.dbApi.doc("meta/session"), function (snap) {
       state.session = snap.exists ? snap.data() : null;
+      if (!snap.metadata.hasPendingWrites) loadCatalog();
       renderHeader();
       renderManageStatus();
     }, function (err) {
       console.warn("session snapshot error", err);
+    }, { includeMetadataChanges: true });
+  }
+
+  function loadCatalog() {
+    var s = state.session;
+    // A stock check saved by the previous version: an admin's app converts it once
+    if (s && !s.listId && isAdmin() && !loadCatalog.migrating) {
+      loadCatalog.migrating = true;
+      SC.migrateLegacyList(s).catch(function (e) { console.warn("list conversion failed", e); })
+        .then(function () { loadCatalog.migrating = false; });
+    }
+    if (!s || !s.listId) { state.catalog = null; state.catalogError = ""; refreshLists(); return; }
+    if (state.catalog && state.catalog.listId === s.listId) return;
+    state.catalogLoading = true;
+    renderHeader();
+    SC.loadCatalog(s).then(function (cat) {
+      if (!state.session || state.session.listId !== s.listId) return;
+      state.catalog = { listId: s.listId, items: cat.items, order: cat.order };
+      state.catalogError = "";
+    }).catch(function (e) {
+      state.catalogError = SC.friendlyError(e);
+    }).then(function () {
+      state.catalogLoading = false;
+      renderHeader();
+      refreshLists();
     });
   }
 
-  function subscribeProducts() {
-    return state.dbApi.collection("products").orderBy("barcode").limit(MAX_PRODUCTS).onSnapshot(function (snap) {
-      var map = {};
-      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
-      state.products = map;
-      state.productsLoaded = true;
+  function subscribeStats() {
+    return SC.listen(state.dbApi.doc("meta/stats"), function (snap) {
+      state.counted = snap.exists ? (snap.data().counted || 0) : 0;
       renderHeader();
-      if (state.activeTab === "list") renderListTab();
-      if (state.activeTab === "manage") renderManageStatus();
-    }, function (err) {
-      console.warn("products snapshot error", err);
-    });
+      renderManageStatus();
+    }, function (err) { console.warn("stats snapshot error", err); });
+  }
+
+  // The latest counts, for the "Recently counted" list
+  function subscribeRecent() {
+    return SC.listen(state.dbApi.collection("counts").orderBy("at", "desc").limit(100), function (snap) {
+      state.recent = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+      if (state.activeTab === "list") renderListRows();
+    }, function (err) { console.warn("recent counts snapshot error", err); });
   }
 
   function subscribeExtras() {
-    return state.dbApi.collection("extras").limit(500).onSnapshot(function (snap) {
+    return SC.listen(state.dbApi.collection("extras").limit(500), function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.extras = map;
-      if (state.activeTab === "list") renderListTab();
+      if (state.activeTab === "list") renderListRows();
     }, function (err) {
       console.warn("extras snapshot error", err);
     });
+  }
+
+  function refreshLists() {
+    if (state.activeTab === "list") renderListTab();
+    if (state.activeTab === "manage") renderManageStatus();
   }
 
   /* ---------------------------------------------------------------
@@ -766,22 +787,20 @@
   function renderHeader() {
     var s = state.session;
     if (!s) {
-      $("#sessionName").textContent = state.dbApi ? "No product list yet \u2014 go to Manage to upload one" : $("#sessionName").textContent;
+      $("#sessionName").textContent = state.dbApi ? (isAdmin() ? "No product list yet — go to Manage to upload one" : "No stock check running yet") : $("#sessionName").textContent;
+    } else if (s && !s.listId) {
+      $("#sessionName").textContent = "This list was saved in an older format — an admin needs to upload it again";
     } else {
-      $("#sessionName").textContent = (s.name || "Stock check") + (s.startedAt ? " \u2014 started " + fmtWhen(s.startedAt) : "");
+      $("#sessionName").textContent = (s.name || "Stock check") + (s.startedAt ? " — started " + fmtWhen(s.startedAt) : "") +
+        (state.catalogLoading ? " · loading list…" : "") + (state.catalogError ? " · " + state.catalogError : "");
     }
-    var total = s ? (s.totalProducts || 0) : 0;
-    var ids = Object.keys(state.products);
-    var countedLoaded = ids.filter(function (id) { return isCounted(state.products[id]); }).length;
-    var denom = total || ids.length;
-    var pct = denom ? Math.round((countedLoaded / denom) * 100) : 0;
+    var total = s && s.listId ? (s.totalProducts || 0) : 0;
+    var counted = Math.min(state.counted, total);
+    var pct = total ? Math.floor((counted / total) * 100) : 0;
     $("#progressFill").style.width = pct + "%";
     $("#progressPct").textContent = pct + "%";
-    var label = countedLoaded + " of " + (denom || 0) + " counted";
-    if (total > MAX_PRODUCTS) label += " (first " + MAX_PRODUCTS + " shown)";
-    $("#progressLabel").textContent = label;
+    $("#progressLabel").textContent = counted.toLocaleString() + " of " + total.toLocaleString() + " counted";
   }
-  function isCounted(p) { return p && p.countedQty !== null && p.countedQty !== undefined; }
 
   /* ---------------------------------------------------------------
    * Tabs
@@ -857,22 +876,24 @@
     var input = $("#scanInput");
     if (input) { input.value = ""; input.focus(); }
 
-    var product = state.products[id];
+    if (!state.catalog && state.catalogLoading) { toast("The product list is still loading \u2014 try again in a moment"); return; }
+    var item = state.catalog && state.catalog.items[id];
+    var product = null;
     var extra = state.extras[id];
 
-    if (!product && !extra && state.dbApi) {
-      // fall back to a direct lookup in case the local cache doesn't include it
+    if (item) {
+      // One read: this item's current count, if anyone has counted it
+      var count = null;
+      try { count = await SC.getCount(id); } catch (e) { console.warn("count lookup failed", e); }
+      product = { barcode: item.barcode, description: item.description, count: count };
+    } else if (!extra && state.dbApi) {
       try {
-        var snap = await state.dbApi.doc("products/" + id).get();
-        if (snap.exists) product = snap.data();
-        else {
-          var esnap = await state.dbApi.doc("extras/" + id).get();
-          if (esnap.exists) extra = esnap.data();
-        }
+        var esnap = await state.dbApi.doc("extras/" + id).get();
+        if (esnap.exists) extra = esnap.data();
       } catch (e) {}
     }
 
-    state.currentScan = { id: id, barcode: code, product: product || null, extra: extra || null };
+    state.currentScan = { id: id, barcode: code, product: product, extra: extra || null };
     renderScannedCard();
   }
 
@@ -888,15 +909,15 @@
       var card = el("div", { class: "scanned-card found" });
       card.appendChild(el("div", { class: "sc-barcode mono", text: sc.barcode }));
       card.appendChild(el("div", { class: "sc-desc", text: p.description || "(no description)" }));
-      var qtyRow = buildQtyRow(isCounted(p) ? p.countedQty : "");
+      var qtyRow = buildQtyRow(p.count ? p.count.qty : "");
       card.appendChild(qtyRow.row);
       var saveRow = el("div", { class: "save-row" });
       var saveBtn = el("button", { class: "btn btn-primary btn-block", text: "Save count" });
       saveBtn.addEventListener("click", function () { saveProductCount(sc.id, qtyRow.getValue()); });
       saveRow.appendChild(saveBtn);
       card.appendChild(saveRow);
-      if (p.updatedBy) {
-        card.appendChild(el("div", { class: "last-counted", text: "Last counted by " + p.updatedBy + (p.updatedAt ? " on " + fmtWhen(p.updatedAt) : "") }));
+      if (p.count) {
+        card.appendChild(el("div", { class: "last-counted", text: "Last counted " + p.count.qty + " by " + (p.count.by || "someone") + (p.count.at ? " on " + fmtWhen(p.count.at) : "") }));
       }
       holder.appendChild(card);
     } else if (sc.extra) {
@@ -957,18 +978,20 @@
 
   async function saveProductCount(id, qty) {
     if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
-    var before = state.products[id] || {};
+    var sc = state.currentScan;
+    if (!sc || sc.id !== id || !sc.product || sc.saving) return;
+    sc.saving = true; // a double tap must not count the item twice
     try {
-      await state.dbApi.doc("products/" + id).update({
-        countedQty: qty, updatedBy: state.staffName || "Staff", updatedByUid: state.user.uid, updatedAt: nowIso()
-      });
+      await SC.saveCount({ id: id, barcode: sc.product.barcode, description: sc.product.description }, qty, sc.product.count);
       toast("Saved: " + qty);
-      SC.log("count_saved", {
-        barcode: before.barcode || id, description: before.description || "",
-        qty: qty, prevQty: isCounted(before) ? before.countedQty : null
-      });
+      if (state.currentScan === sc) {
+        sc.product.count = { qty: qty, by: state.user.name, byUid: state.user.uid, at: nowIso() };
+        renderScannedCard();
+      }
     } catch (e) {
       toast("Couldn't save: " + (e && e.code ? e.code : "error"));
+    } finally {
+      sc.saving = false;
     }
   }
 
@@ -1099,22 +1122,16 @@
   /* ---------------------------------------------------------------
    * LIST TAB
    * ------------------------------------------------------------- */
+  var LIST_LIMIT = 100;
+
   function renderListTab() {
     var root = $("#tab-list");
     root.innerHTML = "";
     var panel = el("div", { class: "panel" });
-    panel.appendChild(el("h2", { text: "All items" }));
-
-    if (state.session && state.session.totalProducts > MAX_PRODUCTS) {
-      panel.appendChild(el("div", { class: "banner warn", text: "This list has more than " + MAX_PRODUCTS + " products. Showing the first " + MAX_PRODUCTS + " \u2014 scanning still works for every item." }));
-    }
-
-    var search = el("input", { class: "search-input", type: "text", placeholder: "Search by barcode or description", value: state.listSearch });
-    search.addEventListener("input", function () { state.listSearch = search.value; renderListRows(); });
-    panel.appendChild(search);
+    panel.appendChild(el("h2", { text: "Items" }));
 
     var filterRow = el("div", { class: "filter-row" });
-    [["all", "All"], ["pending", "Not counted"], ["counted", "Counted"]].forEach(function (f) {
+    [["all", "Search list"], ["recent", "Recently counted"]].forEach(function (f) {
       var b = el("button", { text: f[1] });
       if (state.listFilter === f[0]) b.classList.add("active");
       b.addEventListener("click", function () { state.listFilter = f[0]; renderListTab(); });
@@ -1122,66 +1139,76 @@
     });
     panel.appendChild(filterRow);
 
+    if (state.listFilter === "all") {
+      var search = el("input", { class: "search-input", type: "search", placeholder: "Search barcode or description", value: state.listSearch });
+      search.addEventListener("input", function () { state.listSearch = search.value; renderListRows(); });
+      panel.appendChild(search);
+    }
+
     var listHolder = el("div", { id: "listHolder" });
     panel.appendChild(listHolder);
     root.appendChild(panel);
     renderListRows();
   }
 
+  function itemRow(barcode, description, qty, pill, pillClass) {
+    var counted = qty !== null && qty !== undefined;
+    var row = el("div", { class: "item-row" + (counted ? " counted" : "") });
+    var info = el("div", { class: "info" });
+    info.appendChild(el("div", { class: "desc", text: description || "(no description)" }));
+    info.appendChild(el("div", { class: "code mono", text: barcode }));
+    row.appendChild(info);
+    if (pill) row.appendChild(el("span", { class: pillClass || "status-pill", text: pill }));
+    row.appendChild(el("div", { class: "qty" + (counted ? "" : " dash"), text: counted ? String(qty) : "›" }));
+    row.addEventListener("click", function () { switchTab("scan"); handleScan(barcode); });
+    return row;
+  }
+
   function renderListRows() {
     var holder = $("#listHolder");
     if (!holder) return;
     holder.innerHTML = "";
-    var q = state.listSearch.trim().toLowerCase();
 
-    var rows = Object.keys(state.products).map(function (id) {
-      var p = state.products[id];
-      return { id: id, barcode: p.barcode || id, description: p.description || "", counted: isCounted(p), qty: p.countedQty };
-    });
-
-    rows = rows.filter(function (r) {
-      if (state.listFilter === "counted" && !r.counted) return false;
-      if (state.listFilter === "pending" && r.counted) return false;
-      if (q && r.barcode.toLowerCase().indexOf(q) === -1 && r.description.toLowerCase().indexOf(q) === -1) return false;
-      return true;
-    });
-
-    if (!rows.length) {
-      holder.appendChild(el("div", { class: "empty-note", text: state.productsLoaded ? "No items match." : "No product list yet." }));
+    if (state.listFilter === "recent") {
+      if (!state.recent.length) { holder.appendChild(el("div", { class: "empty-note", text: "Nothing counted yet." })); return; }
+      state.recent.forEach(function (c) {
+        holder.appendChild(itemRow(c.barcode, c.description, c.qty, (c.by || "") + " · " + fmtWhen(c.at)));
+      });
+      var extraIds = Object.keys(state.extras);
+      if (extraIds.length) {
+        holder.appendChild(el("div", { class: "hint", style: "margin:14px 0 4px", text: "Extra items found (not on the list)" }));
+        extraIds.forEach(function (id) {
+          var ex = state.extras[id];
+          holder.appendChild(itemRow(ex.barcode || id, ex.description, ex.qty, "Extra", "badge badge-extra"));
+        });
+      }
       return;
     }
 
-    rows.forEach(function (r) {
-      var row = el("div", { class: "item-row" + (r.counted ? " counted" : "") });
-      var info = el("div", { class: "info" });
-      info.appendChild(el("div", { class: "desc", text: r.description || "(no description)" }));
-      info.appendChild(el("div", { class: "code mono", text: r.barcode }));
-      row.appendChild(info);
-      row.appendChild(el("span", { class: "status-pill", text: r.counted ? "Counted" : "Pending" }));
-      row.appendChild(el("div", { class: "qty" + (r.counted ? "" : " dash"), text: r.counted ? String(r.qty) : "\u2014" }));
-      row.addEventListener("click", function () {
-        switchTab("scan");
-        handleScan(r.barcode);
-      });
-      holder.appendChild(row);
-    });
-
-    var extraRows = Object.keys(state.extras);
-    if (extraRows.length && state.listFilter !== "pending" && !q) {
-      holder.appendChild(el("div", { class: "hint", style: "margin:14px 0 4px", text: "Extra items found (not on original list)" }));
-      extraRows.forEach(function (id) {
-        var ex = state.extras[id];
-        var row = el("div", { class: "item-row counted" });
-        var info = el("div", { class: "info" });
-        info.appendChild(el("div", { class: "desc", text: ex.description || "" }));
-        info.appendChild(el("div", { class: "code mono", text: ex.barcode || id }));
-        row.appendChild(info);
-        row.appendChild(el("span", { class: "badge badge-extra", text: "Extra" }));
-        row.appendChild(el("div", { class: "qty", text: String(ex.qty) }));
-        row.addEventListener("click", function () { switchTab("scan"); handleScan(ex.barcode || id); });
-        holder.appendChild(row);
-      });
+    var cat = state.catalog;
+    if (!cat) {
+      holder.appendChild(el("div", { class: "empty-note", text: state.catalogLoading ? "Loading the product list…" : (state.catalogError || "No product list yet.") }));
+      return;
     }
+    // Counts we already know about (recent ones), so those rows can show their quantity
+    var known = {};
+    state.recent.forEach(function (c) { known[c.id] = c; });
+    var q = state.listSearch.trim().toLowerCase();
+    var shown = 0, matches = 0;
+    for (var i = 0; i < cat.order.length; i++) {
+      var id = cat.order[i], it = cat.items[id];
+      if (q && it.barcode.toLowerCase().indexOf(q) === -1 && it.description.toLowerCase().indexOf(q) === -1) continue;
+      matches++;
+      if (shown < LIST_LIMIT) {
+        var c = known[id];
+        holder.appendChild(itemRow(it.barcode, it.description, c ? c.qty : null, c ? "Counted" : null));
+        shown++;
+      }
+    }
+    if (!matches) { holder.appendChild(el("div", { class: "empty-note", text: "No items match." })); return; }
+    holder.insertBefore(el("div", { class: "hint", style: "margin:0 0 8px", text: matches > shown
+      ? "Showing " + shown + " of " + matches.toLocaleString() + " items — type more of the barcode or name to narrow it down. Tap an item to count it."
+      : matches.toLocaleString() + (matches === 1 ? " item" : " items") + ". Tap an item to see or change its count." }), holder.firstChild);
   }
 
   /* ---------------------------------------------------------------
@@ -1232,15 +1259,15 @@
     panel.innerHTML = "";
     panel.appendChild(el("h2", { text: "Current stock check" }));
     var s = state.session;
-    var ids = Object.keys(state.products);
-    var counted = ids.filter(function (id) { return isCounted(state.products[id]); }).length;
+    var total = s && s.listId ? s.totalProducts || 0 : 0;
+    var counted = Math.min(state.counted, total);
     var grid = el("div", { class: "stat-grid" });
     grid.appendChild(el("div", { class: "stat" }, [
-      el("div", { class: "n", text: String((s && s.totalProducts) || ids.length || 0) }),
+      el("div", { class: "n", text: total.toLocaleString() }),
       el("div", { class: "l", text: "products in list" })
     ]));
     grid.appendChild(el("div", { class: "stat" }, [
-      el("div", { class: "n", text: String(counted) }),
+      el("div", { class: "n", text: counted.toLocaleString() }),
       el("div", { class: "l", text: "counted so far" })
     ]));
     panel.appendChild(grid);
@@ -1287,9 +1314,8 @@
     holder.innerHTML = "";
     if (!importState) return;
 
-    var over = importState.rows.length > MAX_PRODUCTS;
-    if (over) {
-      holder.appendChild(el("div", { class: "banner warn", text: "This file has " + importState.rows.length + " rows. Only the first " + MAX_PRODUCTS + " will be imported." }));
+    if (importState.rows.length > SC.MAX_ITEMS) {
+      holder.appendChild(el("div", { class: "banner warn", text: "This file has " + importState.rows.length.toLocaleString() + " rows. Only the first " + SC.MAX_ITEMS.toLocaleString() + " will be imported." }));
     }
 
     var colOptions = importState.headerRow.map(function (h, i) { return { i: i, label: (h || "(column " + (i + 1) + ")") }; });
@@ -1348,79 +1374,48 @@
 
   async function confirmImport() {
     if (!importState) return;
-    if (!state.dbApi) { toast("Not connected \u2014 can't import"); return; }
+    if (!state.dbApi) { toast("Not connected — can't import"); return; }
     var ok = window.confirm("Starting a new stock check clears any counts already saved. Continue?");
     if (!ok) return;
-
-    var rows = importState.rows.slice(0, MAX_PRODUCTS).map(function (r) {
-      var barcode = String(r[importState.barcodeCol] || "").trim();
-      var description = String(r[importState.descCol] || "").trim();
-      return { barcode: barcode, description: description };
-    }).filter(function (r) { return r.barcode; });
-
-    if (!rows.length) { toast("No rows with a barcode found"); return; }
-
-    toast("Importing\u2026");
-
+    var im = importState;
+    var rows = im.rows.map(function (r) { return { barcode: r[im.barcodeCol], description: r[im.descCol] }; });
     try {
-      var existingIds = Object.keys(state.products);
-      await withConcurrency(existingIds, 12, function (id) {
-        return state.dbApi.doc("products/" + id).delete();
-      });
-
-      await withConcurrency(rows, 12, function (r) {
-        var id = sanitizeId(r.barcode);
-        return state.dbApi.doc("products/" + id).set({
-          barcode: r.barcode, description: r.description,
-          countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null
-        });
-      });
-
-      await state.dbApi.doc("meta/session").set({
-        name: importState.fileName.replace(/\.[^.]+$/, ""),
-        sourceFileName: importState.fileName,
-        totalProducts: rows.length,
-        startedAt: nowIso(),
-        startedBy: state.staffName || "Staff"
-      });
-
-      var importedFile = importState.fileName;
+      var n = await SC.importList(rows, im.fileName, state.session, toast);
       importState = null;
       $("#importMapHolder").innerHTML = "";
-      toast("Stock check started with " + rows.length + " products");
-      SC.log("import", { detail: importedFile + " \u00b7 " + rows.length + " products" });
-      switchTab("scan");
+      toast("Stock check started with " + n.toLocaleString() + " products");
+      if (state.activeTab === "manage") switchTab("scan");
     } catch (e) {
-      toast("Import failed: " + (e && e.code ? e.code : "error"));
+      toast("Import failed: " + SC.friendlyError(e));
     }
   }
 
   async function resetCounts() {
     if (!state.dbApi) { toast("Not connected"); return; }
+    if (!state.counted) { toast("Nothing to reset"); return; }
     var ok = window.confirm("Set every item's counted quantity back to not-counted? This keeps the product list.");
     if (!ok) return;
-    var ids = Object.keys(state.products);
-    if (!ids.length) { toast("Nothing to reset"); return; }
-    toast("Resetting\u2026");
-    await withConcurrency(ids, 12, function (id) {
-      return state.dbApi.doc("products/" + id).update({ countedQty: null, updatedBy: null, updatedByUid: null, updatedAt: null });
-    });
-    toast("Counts reset");
-    SC.log("reset_counts", { detail: ids.length + " items" });
+    toast("Resetting…");
+    try {
+      await SC.resetCounts(function (done, total) { toast("Resetting " + done.toLocaleString() + " of " + total.toLocaleString() + "…"); });
+      toast("Counts reset");
+    } catch (e) {
+      toast("Couldn't reset: " + SC.friendlyError(e));
+    }
   }
 
   // Removes the list, counts, extra items and session to start fresh
   async function deleteStockCheck() {
     if (!state.dbApi) { toast("Not connected"); return; }
-    var nProducts = Object.keys(state.products).length, nExtras = Object.keys(state.extras).length;
-    if (!state.session && !nProducts && !nExtras) { toast("There's no stock check to delete"); return; }
+    var nProducts = state.session ? state.session.totalProducts || 0 : 0, nExtras = Object.keys(state.extras).length;
+    if (!state.session && !nExtras) { toast("There's no stock check to delete"); return; }
     var typed = window.prompt("This permanently deletes the product list (" + SC.plural(nProducts, "item") + "), all counts and " +
       SC.plural(nExtras, "extra item") + ". Staff accounts and the activity log are kept.\n\nType DELETE to confirm:");
     if (typed === null) return;
-    if (typed.trim().toUpperCase() !== "DELETE") { toast("Not deleted \u2014 you need to type DELETE"); return; }
-    toast("Deleting\u2026");
+    if (typed.trim().toUpperCase() !== "DELETE") { toast("Not deleted — you need to type DELETE"); return; }
+    toast("Deleting…");
     try {
-      var n = await SC.deleteStockCheck();
+      var n = await SC.deleteStockCheck(state.session);
       state.currentScan = null;
       importState = null;
       toast("Deleted " + SC.plural(n.products, "product") + " and " + SC.plural(n.extras, "extra item"));
@@ -1431,11 +1426,14 @@
 
   async function exportResults() {
     if (!state.downloadsApi) { toast("Downloads aren't available in this view"); return; }
-    var ids = Object.keys(state.products);
-    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Updated By", "Updated At"]];
-    ids.forEach(function (id) {
-      var p = state.products[id];
-      aoa.push([p.barcode || id, p.description || "", isCounted(p) ? p.countedQty : "", isCounted(p) ? "Counted" : "Not counted", p.updatedBy || "", p.updatedAt ? fmtWhen(p.updatedAt) : ""]);
+    if (!state.catalog) { toast(state.catalogLoading ? "The product list is still loading" : "No product list to export"); return; }
+    toast("Preparing export\u2026");
+    var counts;
+    try { counts = await SC.fetchAllCounts(); } catch (e) { toast("Couldn't export: " + SC.friendlyError(e)); return; }
+    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Counted By", "Counted At"]];
+    state.catalog.order.forEach(function (id) {
+      var it = state.catalog.items[id], c = counts[id];
+      aoa.push([it.barcode, it.description, c ? c.qty : "", c ? "Counted" : "Not counted", c ? c.by || "" : "", c && c.at ? fmtWhen(c.at) : ""]);
     });
     var extraIds = Object.keys(state.extras);
     if (extraIds.length) {
