@@ -2,14 +2,15 @@
   "name": "the-h-stock-management",
   "productName": "The H Stock Management",
   "version": "1.0.0",
-  "description": "The H Stock Management desktop app for Windows",
+  "description": "The H Stock Management desktop app for Windows and macOS",
   "author": "Hatef Hajizadeh",
   "private": true,
   "main": "main.js",
   "scripts": {
     "prepare-app": "node ../scripts/build.js --desktop",
     "start": "npm run prepare-app && electron .",
-    "dist": "npm run prepare-app && electron-builder --win --x64 --publish never"
+    "dist": "npm run prepare-app && electron-builder --win --x64 --publish never",
+    "dist:mac": "npm run prepare-app && electron-builder --mac --universal --publish never"
   },
   "devDependencies": {
     "electron": "^44.4.5",
@@ -19,10 +20,25 @@
     "appId": "com.khiri1234.stockcheck.desktop",
     "productName": "The H Stock Management",
     "copyright": "Copyright © 2026 Hatef Hajizadeh",
-    "files": ["main.js", "preload.js", "app/**/*", "build/icon.png"],
-    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*",
+      "build/icon.png"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -33,6 +49,25 @@
       "createStartMenuShortcut": true,
       "shortcutName": "The H Stock Management",
       "artifactName": "The-H-Stock-Management-Setup-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "build/icon-mac.png",
+      "category": "public.app-category.business",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "title": "The H Stock Management",
+      "artifactName": "The-H-Stock-Management-${version}-mac.dmg"
     }
   }
 }

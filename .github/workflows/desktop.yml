@@ -1,0 +1,111 @@
+# Builds the desktop apps:
+#   Windows: The-H-Stock-Management-Setup-x.y.z.exe
+#   macOS:   The-H-Stock-Management-x.y.z-mac.dmg (Apple Silicon and Intel)
+# Download them from the run's "Artifacts" section on the Actions tab.
+#
+# The Mac app is signed and notarized when these repository secrets exist
+# (Settings -> Secrets and variables -> Actions), otherwise it is built unsigned:
+#   MAC_CERTIFICATE           Developer ID Application certificate (.p12), base64
+#   MAC_CERTIFICATE_PASSWORD  password of the .p12
+#   APPLE_ID                  Apple ID email
+#   APPLE_APP_SPECIFIC_PASSWORD  app-specific password from account.apple.com
+#   APPLE_TEAM_ID             10-character Team ID
+name: Desktop apps
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - desktop/**
+      - dashboard.html
+      - index.html
+      - common.js
+      - scripts/build.js
+      - package.json
+      - package-lock.json
+      - .github/workflows/desktop.yml
+  push:
+    branches: [main]
+    paths:
+      - desktop/**
+      - dashboard.html
+      - index.html
+      - common.js
+      - scripts/build.js
+      - package.json
+      - package-lock.json
+      - .github/workflows/desktop.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # The installer isn't code-signed yet
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install web libraries
+        run: npm ci
+
+      - name: Install Electron
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build installer
+        working-directory: desktop
+        run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: The-H-Stock-Management-Windows
+          path: desktop/dist/*.exe
+          retention-days: 90
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install web libraries
+        run: npm ci
+
+      - name: Install Electron
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build disk image
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "Signing with the Developer ID certificate"
+            npm run dist:mac
+          else
+            echo "No certificate secrets: building unsigned (ad-hoc signed)"
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            npm run dist:mac -- -c.mac.identity=-
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: The-H-Stock-Management-Mac
+          path: desktop/dist/*.dmg
+          retention-days: 90

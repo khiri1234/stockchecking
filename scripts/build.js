@@ -2,7 +2,7 @@
 // copies from node_modules so they start without a network.
 //
 //   node scripts/build.js            -> www/ for the iOS app (index.html + Capacitor)
-//   node scripts/build.js --desktop  -> desktop/app/ for the Windows app
+//   node scripts/build.js --desktop  -> desktop/app/ for the Windows and Mac app
 //                                       (dashboard.html + index.html, no Capacitor)
 const fs = require("fs");
 const path = require("path");
