@@ -72,6 +72,23 @@ await t('staff cannot lower the total', assertFails(setDoc(doc(bob, 'meta/stats'
 await t('admin sets total', assertSucceeds(setDoc(doc(alice, 'meta/stats'), { counted: 0 })));
 await t('staff reads total', assertSucceeds(getDoc(doc(bob, 'meta/stats'))));
 
+// --- recounts ---
+const rec = { barcode: '123', description: 'Milk', status: 'open', requestedBy: 'Alice', requestedByUid: 'alice', requestedAt: 'x', firstQty: 5, firstBy: 'Alice', firstByUid: 'alice', firstAt: 'x' };
+const recount = (qty, uid) => ({ status: 'done', recountQty: qty, recountBy: 'Bob', recountByUid: uid, recountAt: 'y' });
+await t('staff cannot ask for a recount', assertFails(setDoc(doc(bob, 'recounts/123'), rec)));
+await t('admin asks for a recount', assertSucceeds(setDoc(doc(alice, 'recounts/123'), rec)));
+await t('staff reads recounts', assertSucceeds(getDoc(doc(bob, 'recounts/123'))));
+await t('inactive cannot read recounts', assertFails(getDoc(doc(carl, 'recounts/123'))));
+await t('recount must be a whole number', assertFails(updateDoc(doc(bob, 'recounts/123'), recount(-1, 'bob'))));
+await t('staff cannot recount as someone else', assertFails(updateDoc(doc(bob, 'recounts/123'), recount(6, 'alice'))));
+await t('staff cannot change the first count', assertFails(updateDoc(doc(bob, 'recounts/123'), Object.assign(recount(6, 'bob'), { firstQty: 6 }))));
+await t('staff saves the recount', assertSucceeds(updateDoc(doc(bob, 'recounts/123'), recount(6, 'bob'))));
+await t('a finished recount cannot be overwritten', assertFails(updateDoc(doc(bob, 'recounts/123'), recount(7, 'bob'))));
+await t('staff cannot delete a recount', assertFails(deleteDoc(doc(bob, 'recounts/123'))));
+await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'recounts/456'), Object.assign({}, rec, { barcode: '456', firstByUid: 'bob', firstBy: 'Bob' })));
+await t('first counter cannot recount their own count', assertFails(updateDoc(doc(bob, 'recounts/456'), recount(3, 'bob'))));
+await t('admin closes a recount', assertSucceeds(deleteDoc(doc(alice, 'recounts/123'))));
+
 // --- old-format product lists ---
 await t('staff cannot write old products', assertFails(setDoc(doc(bob, 'products/9'), { barcode: '9', description: 'X' })));
 await t('admin writes old product', assertSucceeds(setDoc(doc(alice, 'products/9'), { barcode: '9', description: 'X', countedQty: null })));

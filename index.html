@@ -266,6 +266,8 @@
 
   .banner { padding: 11px 12px; border-radius: var(--radius-sm); font-size: 12.5px; margin-bottom: 12px; line-height: 1.5; border-left: 3px solid var(--accent); background: var(--surface-2); }
   .banner.warn { background: var(--surface-2); color: var(--ink); }
+  .scanned-card.recount { border-left-color: #D69E2E; }
+  .banner.recount { cursor: pointer; font-weight: 600; }
   .banner.err { background: var(--bad-bg); color: var(--bad); border-left-color: var(--bad); }
 
   /* Sign-in screen */
@@ -356,6 +358,7 @@
     catalogError: "",
     counted: 0,             // running total from meta/stats
     recent: [],             // latest counts, newest first
+    recounts: {},           // id -> recounts/{id} (see common.js)
     extras: {},             // id -> extra item data
     activeTab: "scan",
     currentScan: null,      // { id, barcode, existing product|extra or null }
@@ -696,7 +699,7 @@
   var unsubs = [];
   function startSync() {
     if (unsubs.length || !state.dbApi) return;
-    unsubs = [subscribeSession(), subscribeStats(), subscribeRecent(), subscribeExtras()];
+    unsubs = [subscribeSession(), subscribeStats(), subscribeRecent(), subscribeExtras(), subscribeRecounts()];
   }
   function stopSync() {
     unsubs.forEach(function (u) { if (u) u(); });
@@ -706,6 +709,7 @@
     state.catalogError = "";
     state.counted = 0;
     state.recent = [];
+    state.recounts = {};
     state.extras = {};
     state.currentScan = null;
   }
@@ -763,6 +767,37 @@
       state.recent = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
       if (state.activeTab === "list") renderListRows();
     }, function (err) { console.warn("recent counts snapshot error", err); });
+  }
+
+  function subscribeRecounts() {
+    return SC.listen(state.dbApi.collection("recounts"), function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+      state.recounts = map;
+      renderRecountBanner();
+      if (state.activeTab === "list") renderListTab();
+    }, function (err) { console.warn("recounts snapshot error", err); });
+  }
+
+  // Open recounts this person may do (not their own first count)
+  function recountsForMe() {
+    return Object.keys(state.recounts).map(function (id) { return Object.assign({ id: id }, state.recounts[id]); })
+      .filter(function (r) { return r.status === "open" && state.user && r.firstByUid !== state.user.uid; });
+  }
+  // A blind recount is waiting: keep the first number out of sight
+  function hideQty(id) {
+    var r = state.recounts[id];
+    return !!(r && r.status === "open" && state.user && r.firstByUid !== state.user.uid && !isAdmin());
+  }
+  function renderRecountBanner() {
+    var holder = $("#recountBanner");
+    if (!holder) return;
+    holder.innerHTML = "";
+    var n = recountsForMe().length;
+    if (!n) return;
+    var b = el("div", { class: "banner recount", role: "button", text: SC.plural(n, "item") + " to recount \u2014 tap to see " + (n === 1 ? "it" : "them") });
+    b.addEventListener("click", function () { state.listFilter = "recount"; switchTab("list"); });
+    holder.appendChild(b);
   }
 
   function subscribeExtras() {
@@ -849,12 +884,19 @@
     hero.appendChild(form);
     root.appendChild(hero);
 
+    root.appendChild(el("div", { id: "recountBanner" }));
+    renderRecountBanner();
     var scannedHolder = el("div", { id: "scannedHolder" });
     root.appendChild(scannedHolder);
 
     if (state.currentScan) renderScannedCard();
 
-    setTimeout(function () { var i = $("#scanInput"); if (i) i.focus(); }, 50);
+    // Ready the barcode box, unless someone is already typing somewhere else
+    // (a quantity on a card that just opened): taking focus would move their typing
+    setTimeout(function () {
+      var i = $("#scanInput"), a = document.activeElement;
+      if (i && (!a || a === document.body || !$("#tab-scan").contains(a))) i.focus();
+    }, 50);
   }
 
   function arrowIcon() {
@@ -904,6 +946,24 @@
     var sc = state.currentScan;
     if (!sc) return;
 
+    var rec = state.recounts[sc.id];
+    if (sc.product && rec && rec.status === "open" && rec.firstByUid !== state.user.uid) {
+      // Recount: count again without seeing the first number
+      var rcard = el("div", { class: "scanned-card recount" });
+      rcard.appendChild(el("div", { class: "sc-barcode mono", text: sc.barcode }));
+      rcard.appendChild(el("div", { class: "sc-desc", text: sc.product.description || "(no description)" }));
+      rcard.appendChild(el("div", { class: "banner", text: "Recount requested. Count this item again from scratch \u2014 the earlier number is hidden on purpose." }));
+      var rq = buildQtyRow("");
+      rcard.appendChild(rq.row);
+      var rbtn = el("button", { class: "btn btn-primary btn-block", text: "Save recount" });
+      rbtn.addEventListener("click", function () {
+        if (!rq.row.querySelector("input").value.trim()) { toast("Enter a quantity"); return; }
+        saveRecount(sc, rec, rq.getValue());
+      });
+      rcard.appendChild(el("div", { class: "save-row" }, [rbtn]));
+      holder.appendChild(rcard);
+      return;
+    }
     if (sc.product) {
       var p = sc.product;
       var card = el("div", { class: "scanned-card found" });
@@ -919,6 +979,9 @@
       if (p.count) {
         card.appendChild(el("div", { class: "last-counted", text: "Last counted " + p.count.qty + " by " + (p.count.by || "someone") + (p.count.at ? " on " + fmtWhen(p.count.at) : "") }));
       }
+      if (rec) card.appendChild(el("div", { class: "last-counted", text: rec.status === "open"
+        ? "A recount has been requested. Someone else needs to count this item."
+        : "Recounted by " + (rec.recountBy || "someone") + " \u2014 waiting for an admin to decide." }));
       holder.appendChild(card);
     } else if (sc.extra) {
       var ex = sc.extra;
@@ -974,6 +1037,20 @@
       var v = parseInt(input.value, 10);
       return isNaN(v) ? 0 : v;
     } };
+  }
+
+  async function saveRecount(sc, rec, qty) {
+    if (sc.saving) return;
+    sc.saving = true;
+    try {
+      await SC.saveRecount(sc.id, rec, qty);
+      toast("Recount saved: " + qty);
+      if (state.currentScan === sc) { state.currentScan = null; renderScannedCard(); }
+    } catch (e) {
+      toast("Couldn't save: " + SC.friendlyError(e));
+    } finally {
+      sc.saving = false;
+    }
   }
 
   async function saveProductCount(id, qty) {
@@ -1131,7 +1208,10 @@
     panel.appendChild(el("h2", { text: "Items" }));
 
     var filterRow = el("div", { class: "filter-row" });
-    [["all", "Search list"], ["recent", "Recently counted"]].forEach(function (f) {
+    var nRecount = recountsForMe().length;
+    var filters = [["all", "Search list"], ["recent", "Recently counted"]];
+    if (nRecount || state.listFilter === "recount") filters.push(["recount", "To recount (" + nRecount + ")"]);
+    filters.forEach(function (f) {
       var b = el("button", { text: f[1] });
       if (state.listFilter === f[0]) b.classList.add("active");
       b.addEventListener("click", function () { state.listFilter = f[0]; renderListTab(); });
@@ -1169,10 +1249,19 @@
     if (!holder) return;
     holder.innerHTML = "";
 
+    if (state.listFilter === "recount") {
+      var todo = recountsForMe();
+      if (!todo.length) { holder.appendChild(el("div", { class: "empty-note", text: "Nothing to recount." })); return; }
+      holder.appendChild(el("div", { class: "hint", style: "margin:0 0 8px", text: "Tap an item and count it again from scratch. The earlier number is hidden on purpose." }));
+      todo.forEach(function (r) { holder.appendChild(itemRow(r.barcode, r.description, null, "Recount")); });
+      return;
+    }
+
     if (state.listFilter === "recent") {
       if (!state.recent.length) { holder.appendChild(el("div", { class: "empty-note", text: "Nothing counted yet." })); return; }
       state.recent.forEach(function (c) {
-        holder.appendChild(itemRow(c.barcode, c.description, c.qty, (c.by || "") + " · " + fmtWhen(c.at)));
+        if (hideQty(c.id)) holder.appendChild(itemRow(c.barcode, c.description, null, "Recount"));
+        else holder.appendChild(itemRow(c.barcode, c.description, c.qty, (c.by || "") + " · " + fmtWhen(c.at)));
       });
       var extraIds = Object.keys(state.extras);
       if (extraIds.length) {
@@ -1201,7 +1290,8 @@
       matches++;
       if (shown < LIST_LIMIT) {
         var c = known[id];
-        holder.appendChild(itemRow(it.barcode, it.description, c ? c.qty : null, c ? "Counted" : null));
+        if (hideQty(id)) holder.appendChild(itemRow(it.barcode, it.description, null, "Recount"));
+        else holder.appendChild(itemRow(it.barcode, it.description, c ? c.qty : null, c ? "Counted" : null));
         shown++;
       }
     }

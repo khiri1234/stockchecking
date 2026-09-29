@@ -48,6 +48,22 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Recount requests. Admins ask and decide; anyone active except the
+    // person who made the first count can save the recount, once.
+    match /recounts/{id} {
+      allow read: if isActive();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isActive()
+          && resource.data.status == 'open'
+          && request.auth.uid != resource.data.firstByUid
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'recountQty', 'recountBy', 'recountByUid', 'recountAt'])
+          && request.resource.data.status == 'done'
+          && request.resource.data.recountByUid == request.auth.uid
+          && request.resource.data.recountQty is int && request.resource.data.recountQty >= 0);
+    }
+
     // Running total of counted items: staff can only add one at a time
     match /meta/stats {
       allow read: if isActive();

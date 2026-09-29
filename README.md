@@ -31,6 +31,7 @@ The first person to open the app after setup creates the admin account.
 | `counts/{barcode}` | Only items someone has counted: `barcode`, `description`, `qty`, `by`, `byUid`, `at` |
 | `extras/{barcode}` | Scanned items not on the list: `barcode`, `description`, `qty`, `addedBy`, `addedByUid`, `addedAt` |
 | `meta/session` | Current stock check: `name`, `sourceFileName`, `totalProducts`, `startedAt`, `startedBy`, `listId`, `listChunks` |
+| `recounts/{barcode}` | Blind recount requests: `status` (`open`/`done`), `firstQty`/`firstBy`/`firstByUid` (the count when asked), `recountQty`/`recountBy`/`recountByUid`/`recountAt`, `requestedBy`. Admins ask and decide; the first counter can't recount their own count |
 | `meta/stats` | `counted`: running total for the progress bars (staff may only add 1; an admin's dashboard corrects it from `counts/`) |
 | `products/{barcode}` | Lists saved by earlier versions. An admin's app converts them to `catalog/` + `counts/` automatically, keeping the counts |
 | `meta/setup` | Marks that the first admin exists |
@@ -62,6 +63,17 @@ sign-in under the same username and switches the old one off
 `firestore.rules` only gives access to signed-in, active accounts, lets staff
 change nothing but counts saved under their own ID, and keeps the activity
 log append-only. Tests: `cd tests && npm install && npm test` (needs Java).
+
+## Recounts
+
+An admin can ask for a second, blind count of any counted item: on its count
+card (**Ask for a recount**), or for many at once from **Items > Counted >
+Ask for recount of these** (search first to narrow the list). Staff see the
+items under **Recounts** on the dashboard and as a banner and **To recount**
+list on the phone. The first number is hidden from them, and whoever made
+the first count can't do the recount. The admin's **Recounts** page then shows
+the first count, the recount and the difference: **Use recount** makes the
+recount the item's count, **Keep first count** leaves it as it was.
 
 ## Firebase setup
 

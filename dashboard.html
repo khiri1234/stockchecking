@@ -155,6 +155,12 @@
   .pill.accent { background: var(--accent-bg); color: var(--accent-2); }
   .pill.bad { background: var(--bad-bg); color: var(--bad); }
   .pill.ink { background: var(--ink); color: var(--bg); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  nav.side-nav button .count-badge { margin-left: auto; min-width: 20px; padding: 1px 7px; border-radius: 100px; background: var(--accent); color: #fff; font-size: 11.5px; font-weight: 700; text-align: center; }
+  .item-card.recount { border-left-color: var(--warn); }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .diff-bad { color: var(--bad); font-weight: 700; }
+  .diff-good { color: var(--good); font-weight: 700; }
   .qty-cell { font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 14px; }
   .qty-btn { font: inherit; background: none; border: 1px dashed transparent; border-radius: 6px; padding: 3px 8px; cursor: pointer; color: var(--ink); min-width: 48px; text-align: right; }
   .qty-btn:hover { border-color: var(--border); background: var(--surface); }
@@ -299,6 +305,7 @@
     catalogLoading: false,
     catalogError: "",
     counts: {},          // id -> { barcode, description, qty, by, byUid, at }
+    recounts: {},        // id -> recounts/{id} (see common.js)
     statsCounted: null,  // meta/stats.counted
     currentScan: null,
     items: { search: "", filter: "all", limit: 200 },
@@ -312,6 +319,7 @@
     items: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',
     activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
     staff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    recounts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M9 12l2 2 4-4"/></svg>',
     stock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
@@ -321,6 +329,7 @@
     { id: "overview", label: "Overview", title: "Overview" },
     { id: "count", label: "Count", title: "Count items" },
     { id: "items", label: "Items", title: "Items" },
+    { id: "recounts", label: "Recounts", title: "Recounts" },
     { id: "activity", label: "Activity log", title: "Activity log", admin: true },
     { id: "staff", label: "Staff", title: "Staff", admin: true },
     { id: "stock", label: "Stock check", title: "Stock check", admin: true }
@@ -517,6 +526,11 @@
       state.statsCounted = s.exists ? s.data().counted || 0 : 0;
       checkRunningTotal();
     }, bad));
+    unsubs.push(SC.listen(db.collection("recounts"), function (snap) {
+      var map = {};
+      snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+      state.recounts = map; renderNavBadges(); refresh(["recounts", "items", "count"]);
+    }, bad));
     unsubs.push(SC.listen(db.collection("extras").limit(500), function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
@@ -537,7 +551,7 @@
     unsubs.forEach(function (u) { u(); });
     unsubs = [];
     state.session = null; state.products = {}; state.extras = {}; state.users = []; state.activity = [];
-    state.catalog = null; state.catalogError = ""; state.counts = {}; state.statsCounted = null;
+    state.catalog = null; state.catalogError = ""; state.counts = {}; state.statsCounted = null; state.recounts = {};
     state.loaded = { products: false, counts: false, activity: false, users: false };
   }
 
@@ -650,6 +664,18 @@
       b.addEventListener("click", function () { go(p.id); });
       nav.appendChild(b);
     });
+    renderNavBadges();
+  }
+  // Recounts: admins see how many are waiting for a decision, everyone else
+  // how many they can recount
+  function renderNavBadges() {
+    var b = $('#nav button[data-page="recounts"]');
+    if (!b) return;
+    var n = isAdmin() ? recountList().filter(function (r) { return r.status === "done"; }).length : recountsForMe().length;
+    var badge = b.querySelector(".count-badge");
+    if (!n) { if (badge) badge.remove(); return; }
+    if (!badge) { badge = el("span", { class: "count-badge" }); b.appendChild(badge); }
+    badge.textContent = String(n);
   }
   function go(page) {
     state.page = page;
@@ -662,7 +688,7 @@
   function renderPage() {
     var root = $("#page");
     root.innerHTML = "";
-    ({ overview: renderOverview, count: renderCount, items: renderItems, activity: renderActivity, staff: renderStaff, stock: renderStock }[state.page] || renderOverview)(root);
+    ({ overview: renderOverview, count: renderCount, items: renderItems, recounts: renderRecounts, activity: renderActivity, staff: renderStaff, stock: renderStock }[state.page] || renderOverview)(root);
   }
 
   /* ---------------- overview ---------------- */
@@ -745,10 +771,13 @@
   function describe(a) {
     var parts = [el("b", { text: a.name || a.username || "Someone" }), " "];
     var label = SC.actionLabel(a.action).toLowerCase();
-    if (a.action === "count_saved" || a.action === "extra_added") {
+    if (a.action === "count_saved" || a.action === "extra_added" || (/^recount_/.test(a.action) && a.barcode && a.qty !== undefined)) {
       parts.push(label + " ");
       parts.push(el("b", { text: a.description || a.barcode || "an item" }));
       parts.push(el("span", { class: "muted", text: " → " + a.qty + (a.prevQty !== null && a.prevQty !== undefined ? " (was " + a.prevQty + ")" : "") }));
+    } else if (a.action === "recount_requested" && a.barcode) {
+      parts.push(label + " of ");
+      parts.push(el("b", { text: a.description || a.barcode }));
     } else {
       parts.push(label);
       if (a.target) parts.push(el("span", { class: "muted", text: " · @" + a.target }));
@@ -941,15 +970,27 @@
     if (!sc) return;
     var p = sc.product ? (state.products[sc.id] || sc.product) : null;
     var ex = sc.extra ? (state.extras[sc.id] || sc.extra) : null;
-    var card = el("div", { class: "card item-card " + (p ? "found" : ex ? "extra" : "unknown") });
+    var rec = state.recounts[sc.id];
+    var blind = p && rec && rec.status === "open" && rec.firstByUid !== state.user.uid;
+    var card = el("div", { class: "card item-card " + (blind ? "recount" : p ? "found" : ex ? "extra" : "unknown") });
     card.appendChild(el("div", { class: "code mono", text: sc.barcode }));
     var q;
-    if (p) {
+    if (blind) {
+      // Recount: count again without seeing the first number
+      card.appendChild(el("div", { class: "desc", text: p.description || "(no description)" }));
+      card.appendChild(el("div", { class: "banner", text: "Recount requested. Count this item again from scratch \u2014 the earlier number is hidden on purpose." }));
+      q = qtyRow("");
+      card.appendChild(q.row);
+      card.appendChild(el("div", { class: "actions" }, [el("button", { class: "btn btn-primary", type: "button", text: "Save recount", onclick: function () { saveRecountFor(sc.id, rec, q.value()); } })]));
+    } else if (p) {
       card.appendChild(el("div", { class: "desc", text: p.description || "(no description)" }));
       q = qtyRow(isCounted(p) ? p.countedQty : "");
       card.appendChild(q.row);
       card.appendChild(el("div", { class: "actions" }, [el("button", { class: "btn btn-primary", type: "button", text: isCounted(p) ? "Update count" : "Save count", onclick: function () { saveCount(sc.id, p, q.value()); } })]));
       if (isCounted(p)) card.appendChild(el("div", { class: "meta", text: "Last counted " + p.countedQty + " by " + (p.updatedBy || "someone") + " · " + fmtWhen(p.updatedAt) }));
+      if (rec && rec.status === "open") card.appendChild(el("p", { class: "note", text: "A recount has been requested. Someone else needs to count this item." }));
+      else if (rec) card.appendChild(el("p", { class: "note", text: "Recounted by " + (rec.recountBy || "someone") + " \u2014 waiting for an admin to decide." }));
+      else if (isAdmin() && isCounted(p)) card.appendChild(el("div", { style: "margin-top:10px" }, [el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Ask for a recount", onclick: function () { askRecount([sc.id]); } })]));
     } else {
       card.appendChild(el("div", { class: "desc", text: ex ? ex.description : "Not on the product list" }));
       var descInput = null;
@@ -970,6 +1011,19 @@
     q.input.addEventListener("keydown", function (e) { if (e.key === "Enter") card.querySelector(".actions .btn").click(); });
     q.input.focus();
     q.input.select();
+  }
+
+  async function saveRecountFor(id, rec, qty) {
+    if (qty === null) { toast("Enter a quantity"); return; }
+    if (savingIds[id]) return;
+    savingIds[id] = true;
+    try {
+      await SC.saveRecount(id, rec, qty);
+      toast("Recount saved: " + qty);
+      state.currentScan = null;
+      if (state.page === "count") renderPage();
+    } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
+    finally { delete savingIds[id]; }
   }
 
   var savingIds = {};
@@ -1009,6 +1063,13 @@
       seg.appendChild(b);
     });
     var bar = el("div", { class: "toolbar" }, [search, seg]);
+    if (isAdmin() && state.items.filter === "counted") bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", id: "recountShown", text: "Ask for recount of these", onclick: function () {
+      var ids = countedRowsShown().filter(function (id) { return !state.recounts[id]; });
+      if (!ids.length) { toast("These items already have a recount"); return; }
+      if (ids.length > 500) { toast("Narrow it down to 500 items or fewer (search first)"); return; }
+      if (!window.confirm("Ask for a recount of " + SC.plural(ids.length, "item") + "? Someone other than the first counter will count each one again without seeing the first number.")) return;
+      askRecount(ids);
+    } }));
     if (isAdmin()) bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", html: ICONS.download + " Export", onclick: exportResults }));
     root.appendChild(bar);
     root.appendChild(el("div", { class: "card table-card" }, [el("div", { class: "table-scroll", id: "itemsScroll" }), el("div", { class: "table-foot", id: "itemsFoot" })]));
@@ -1042,18 +1103,24 @@
       });
       var tbody = el("tbody");
       rows.slice(0, state.items.limit).forEach(function (p) {
-        var c = isCounted(p);
+        var c = isCounted(p), rec = state.recounts[p.id];
+        // Waiting for a blind recount: don't show the first number to the people who may do it
+        var hide = rec && rec.status === "open" && !isAdmin() && rec.firstByUid !== state.user.uid;
         var qtyTd = el("td", { class: "r" });
-        var qb = el("button", { type: "button", class: "qty-btn qty-cell" + (c ? "" : " dash"), text: c ? String(p.countedQty) : "—", title: "Click to enter a count" });
-        qb.addEventListener("click", function () { editQty(qtyTd, p); });
-        qtyTd.appendChild(qb);
+        if (hide) qtyTd.appendChild(el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Recount", onclick: function () { lookup(p.barcode); } }));
+        else {
+          var qb = el("button", { type: "button", class: "qty-btn qty-cell" + (c ? "" : " dash"), text: c ? String(p.countedQty) : "—", title: "Click to enter a count" });
+          qb.addEventListener("click", function () { if (rec && rec.status === "open" && rec.firstByUid !== state.user.uid) lookup(p.barcode); else editQty(qtyTd, p); });
+          qtyTd.appendChild(qb);
+        }
+        var status = [el("span", { class: "pill " + (rec ? "warn" : c ? "good" : "idle"), text: rec ? (rec.status === "open" ? "Recount requested" : "Recounted") : c ? "Counted" : "Not counted" })];
         tbody.appendChild(el("tr", {}, [
           el("td", { class: "mono", text: p.barcode }),
           el("td", { text: p.description || "" }),
-          el("td", {}, [el("span", { class: "pill " + (c ? "good" : "idle"), text: c ? "Counted" : "Not counted" })]),
+          el("td", {}, status),
           qtyTd,
-          el("td", { text: c ? (p.updatedBy || "") : "" }),
-          el("td", { class: "dim", text: c ? fmtWhen(p.updatedAt) : "" })
+          el("td", { text: c && !hide ? (p.updatedBy || "") : "" }),
+          el("td", { class: "dim", text: c && !hide ? fmtWhen(p.updatedAt) : "" })
         ]));
       });
       table.appendChild(tbody);
@@ -1070,6 +1137,106 @@
     }
     $("#itemsFoot").textContent = "Showing " + shownN.toLocaleString() + " of " + rows.length.toLocaleString() + " \u00b7 " +
       st.counted.toLocaleString() + " of " + st.total.toLocaleString() + " counted \u00b7 " + SC.plural(st.extras, "extra item");
+  }
+
+  // Barcode IDs of the counted items matching the current search (Items page)
+  function countedRowsShown() {
+    var q = state.items.search.trim().toLowerCase();
+    return Object.keys(state.products).filter(function (id) {
+      var p = state.products[id];
+      return isCounted(p) && (!q || String(p.barcode).toLowerCase().indexOf(q) !== -1 || String(p.description || "").toLowerCase().indexOf(q) !== -1);
+    });
+  }
+
+  /* ---------------- recounts ---------------- */
+  function recountList() {
+    return Object.keys(state.recounts).map(function (id) { return Object.assign({ id: id }, state.recounts[id]); })
+      .sort(function (a, b) { return String(b.recountAt || b.requestedAt).localeCompare(String(a.recountAt || a.requestedAt)); });
+  }
+  // Open recounts this person may do (not their own first count)
+  function recountsForMe() {
+    return recountList().filter(function (r) { return r.status === "open" && r.firstByUid !== state.user.uid; });
+  }
+
+  async function askRecount(ids) {
+    var items = ids.map(function (id) {
+      var p = state.products[id];
+      return { id: id, barcode: p.barcode, description: p.description, count: { qty: p.countedQty, by: p.updatedBy, byUid: p.updatedByUid, at: p.updatedAt } };
+    }).filter(function (it) { return it.count.qty !== null && it.count.qty !== undefined; });
+    if (!items.length) return;
+    try {
+      var n = await SC.requestRecounts(items);
+      toast("Recount requested for " + SC.plural(n, "item"));
+      if (state.page === "count") { state.currentScan = null; renderPage(); }
+    } catch (e) { toast("Couldn't ask for a recount: " + SC.friendlyError(e)); }
+  }
+
+  function renderRecounts(root) {
+    var mine = recountsForMe();
+    // Items to recount (everyone): no numbers shown
+    var todo = el("div", { class: "card" }, [el("div", { class: "card-head" }, [el("div", {}, [
+      el("h2", { text: "To recount" }),
+      el("div", { class: "card-sub", text: "Count each item again from scratch. The earlier number is hidden on purpose." })
+    ])])]);
+    if (!mine.length) todo.appendChild(el("div", { class: "empty", text: "Nothing to recount." }));
+    else {
+      var feed = el("div", { class: "feed" });
+      mine.forEach(function (r) {
+        feed.appendChild(el("div", { class: "feed-row", style: "grid-template-columns: minmax(0,1fr) auto" }, [
+          el("div", { class: "what" }, [el("div", { text: r.description || r.barcode, style: "font-weight:600" }), el("div", { class: "mono", text: r.barcode, style: "font-size:12px;color:var(--ink-dim)" })]),
+          el("button", { class: "btn btn-primary btn-sm", type: "button", text: "Recount", onclick: function () { lookup(r.barcode); } })
+        ]));
+      });
+      todo.appendChild(feed);
+    }
+    if (!isAdmin()) { root.appendChild(todo); return; }
+
+    // Admins: compare and decide
+    var all = recountList();
+    var card = el("div", { class: "card table-card" });
+    card.appendChild(el("div", { class: "card-head", style: "padding:18px 20px 0" }, [el("div", {}, [
+      el("h2", { text: "Results" }),
+      el("div", { class: "card-sub", text: "Ask for recounts from the Items page (filter Counted) or on an item's count card." })
+    ])]));
+    if (!all.length) card.appendChild(el("div", { class: "empty", text: "No recounts yet." }));
+    else {
+      var table = el("table", { class: "data" }, [el("thead", {}, [el("tr", {}, ["Barcode", "Description", "First count", "Recount", "Difference", ""].map(function (h, i) { return el("th", { class: i >= 2 && i <= 4 ? "r" : "", text: h }); }))])]);
+      var tb = el("tbody");
+      all.forEach(function (r) {
+        var done = r.status === "done", diff = done ? r.recountQty - r.firstQty : null;
+        var actions = el("div", { class: "row-actions" });
+        if (done) {
+          actions.appendChild(el("button", { class: "btn btn-primary btn-sm", type: "button", text: "Use recount", onclick: function () { resolve(r, true); } }));
+          actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Keep first count", onclick: function () { resolve(r, false); } }));
+        } else {
+          actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Cancel", onclick: function () {
+            SC.cancelRecount(r.id).then(function () { toast("Recount cancelled"); }, function (e) { toast("Couldn't cancel: " + SC.friendlyError(e)); });
+          } }));
+        }
+        tb.appendChild(el("tr", {}, [
+          el("td", { class: "mono", text: r.barcode }),
+          el("td", { text: r.description || "" }),
+          el("td", { class: "r" }, [el("div", { class: "qty-cell", text: String(r.firstQty) }), el("div", { class: "dim", style: "font-size:12px", text: r.firstBy || "" })]),
+          el("td", { class: "r" }, done
+            ? [el("div", { class: "qty-cell", text: String(r.recountQty) }), el("div", { class: "dim", style: "font-size:12px", text: r.recountBy || "" })]
+            : [el("span", { class: "pill warn", text: "Waiting" })]),
+          el("td", { class: "r" }, done ? [el("span", { class: diff === 0 ? "diff-good" : "diff-bad", text: diff === 0 ? "Match" : (diff > 0 ? "+" : "") + diff })] : []),
+          el("td", {}, [actions])
+        ]));
+      });
+      table.appendChild(tb);
+      card.appendChild(el("div", { class: "table-scroll" }, [table]));
+    }
+    var waiting = all.filter(function (r) { return r.status === "open"; }).length, decided = all.length - waiting;
+    card.appendChild(el("div", { class: "table-foot", text: SC.plural(decided, "recount") + " to review \u00b7 " + waiting + " waiting to be recounted" }));
+    root.appendChild(el("div", { style: "display:grid;gap:18px" }, [card, todo]));
+  }
+
+  async function resolve(r, useRecount) {
+    try {
+      await SC.resolveRecount(r.id, r, useRecount);
+      toast(useRecount ? "Count changed to " + r.recountQty : "Kept the first count (" + r.firstQty + ")");
+    } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
   }
 
   function editQty(td, p) {
@@ -1116,13 +1283,13 @@
   /* ---------------- activity log ---------------- */
   var ACTION_GROUPS = [
     ["", "All actions"],
-    ["counts", "Counts & extra items"],
+    ["counts", "Counts, recounts & extra items"],
     ["sign", "Sign-ins & sign-outs"],
     ["stock", "Stock check (import, reset, export)"],
     ["staff", "Staff & passwords"]
   ];
   function actionGroup(a) {
-    if (a === "count_saved" || a === "extra_added") return "counts";
+    if (a === "count_saved" || a === "extra_added" || /^recount_/.test(a)) return "counts";
     if (a === "login" || a === "logout") return "sign";
     if (a === "import" || a === "reset_counts" || a === "export" || a === "stock_deleted") return "stock";
     return "staff";
