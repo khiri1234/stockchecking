@@ -75,6 +75,11 @@ the first count can't do the recount. The admin's **Recounts** page then shows
 the first count, the recount and the difference: **Use recount** makes the
 recount the item's count, **Keep first count** leaves it as it was.
 
+Admins can do the same on the phone: **Ask for a recount** on a counted
+item's scan card, **Spot check 10 random counted items** (picked from the
+latest 100 counts) and the results with the same two buttons, all under
+**Manage > Recounts**; the Manage tab shows how many results are waiting.
+
 ## Firebase setup
 
 1. Project `stockchek-1dbe4`; its web config is at the top of `common.js`.
