@@ -42,12 +42,14 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
-    env:
-      # Each run is a newer version: 1.<run>, version code 100 + run
-      ANDROID_VERSION_CODE: ${{ 100 + github.run_number }}
-      ANDROID_VERSION_NAME: 1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+
+      # Each run is a newer version: 1.<run>, version code 100 + run
+      - name: Set the version
+        run: |
+          echo "ANDROID_VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_NAME=1.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
