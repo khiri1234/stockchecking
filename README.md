@@ -93,7 +93,9 @@ before the first scan (the dashboard has a **Counting in** box on the Count
 page); the choice stays on that device until changed, and every count part
 records it. **Areas & tasks** and the Overview's **By area** card show the
 items counted, units and people in each area, and the export has an
-**Areas** column.
+**Areas** column. Counts saved without an area (before areas were set up, or with
+**No specific area**) show as **No area**; its **Merge into…** button records
+them all as counted in the area you pick, without changing the numbers.
 
 Tasks give work to one person: an area (**New task**, or **Assign** on an
 area), a list of items (on **Items**, filter and search, then **Assign these
