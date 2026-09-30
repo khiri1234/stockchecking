@@ -148,6 +148,7 @@
     login: "Signed in",
     logout: "Signed out",
     count_saved: "Counted",
+    count_added: "Added to count",
     extra_added: "Added extra item",
     import: "Started a new stock check",
     reset_counts: "Reset all counts",
@@ -256,16 +257,64 @@
     return snap.exists ? snap.data() : null;
   }
 
-  // item: { id, barcode, description }; before: the item's existing count doc (or null)
+  /* A count is made of parts: parts/{partId} = { qty, by, byUid, at }, and
+   * qty is their total. Scanning a counted item again adds a part (an item on
+   * several shelves: 12 + 6 = 18) instead of replacing the count. Additions
+   * use increments, so two people adding at once can't overwrite each other.
+   * Counts saved before parts existed have no parts field: see countParts. */
+
+  function newPartId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  // A count's parts, oldest first (a count without parts is one part)
+  function countParts(c) {
+    if (!c) return [];
+    var p = c.parts;
+    if (!p || typeof p !== "object") return [{ id: "all", qty: c.qty, by: c.by || "", byUid: c.byUid || "", at: c.at || "" }];
+    return Object.keys(p).map(function (k) { return Object.assign({ id: k }, p[k]); })
+      .filter(function (x) { return x.qty; })
+      .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+  }
+
+  // "12 + 6 = 18", or "" for a single part
+  function partsText(c) {
+    var parts = countParts(c);
+    if (parts.length < 2) return "";
+    return parts.map(function (x) { return x.qty; }).join(" + ") + " = " + c.qty;
+  }
+
+  function part(qty, at) { return { qty: qty, by: profile.name, byUid: profile.uid, at: at }; }
+
+  // Replaces the whole count. item: { id, barcode, description };
+  // before: the item's existing count doc (or null)
   async function saveCount(item, qty, before) {
+    var now = new Date().toISOString(), parts = {};
+    parts[newPartId()] = part(qty, now);
     var batch = db.batch();
     batch.set(db.doc("counts/" + item.id), {
       barcode: item.barcode, description: item.description || "", qty: qty,
-      by: profile.name, byUid: profile.uid, at: new Date().toISOString()
+      by: profile.name, byUid: profile.uid, at: now, parts: parts
     });
     if (!before) batch.set(db.doc("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
     await batch.commit();
     log("count_saved", { barcode: item.barcode, description: item.description || "", qty: qty, prevQty: before ? before.qty : null });
+  }
+
+  // Adds n (may be negative, to undo) to the count as part partId (a new part
+  // unless given; Quick count keeps adding to one part per item). before: the
+  // item's count doc as last seen, or null if it had none. Resolves when the
+  // server has it.
+  function addToCount(item, n, partId, before) {
+    var inc = firebase.firestore.FieldValue.increment, now = new Date().toISOString(), parts = {};
+    // A count saved without parts (older versions, recount results) keeps its total as the first part
+    if (before && !before.parts) parts.all = { qty: before.qty, by: before.by || "", byUid: before.byUid || "", at: before.at || now };
+    parts[partId || newPartId()] = { qty: inc(n), by: profile.name, byUid: profile.uid, at: now };
+    var batch = db.batch();
+    batch.set(db.doc("counts/" + item.id), {
+      barcode: item.barcode, description: item.description || "", qty: inc(n),
+      by: profile.name, byUid: profile.uid, at: now, parts: parts
+    }, { merge: true });
+    if (!before) batch.set(db.doc("meta/stats"), { counted: inc(1) }, { merge: true });
+    return batch.commit();
   }
 
   // Deletes every document in a collection, 400 per batch; returns how many
@@ -708,6 +757,10 @@
     loadCatalog: loadCatalog,
     getCount: getCount,
     saveCount: saveCount,
+    addToCount: addToCount,
+    newPartId: newPartId,
+    countParts: countParts,
+    partsText: partsText,
     fetchAllCounts: fetchAllCounts,
     importList: importList,
     resetCounts: resetCounts,

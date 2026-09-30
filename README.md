@@ -28,7 +28,7 @@ The first person to open the app after setup creates the admin account.
 | Firestore path | Holds |
 |---|---|
 | `catalog/{listId}_{n}` | The product list: `lines`, one `barcode<TAB>description` line per item, split into documents of up to ~700 KB (50,000 items is about 4 documents) |
-| `counts/{barcode}` | Only items someone has counted: `barcode`, `description`, `qty`, `by`, `byUid`, `at` |
+| `counts/{barcode}` | Only items someone has counted: `barcode`, `description`, `qty` (the total), `by`, `byUid`, `at`, and `parts/{partId}` = `{ qty, by, byUid, at }`, one per addition (12 + 6 = 18). Counts saved before parts existed have no `parts` and count as one part |
 | `extras/{barcode}` | Scanned items not on the list: `barcode`, `description`, `qty`, `addedBy`, `addedByUid`, `addedAt` |
 | `meta/session` | Current stock check: `name`, `sourceFileName`, `totalProducts`, `startedAt`, `startedBy`, `listId`, `listChunks` |
 | `recounts/{barcode}` | Blind recount requests: `status` (`open`/`done`), `firstQty`/`firstBy`/`firstByUid` (the count when asked), `recountQty`/`recountBy`/`recountByUid`/`recountAt`, `requestedBy`. Admins ask and decide; the first counter can't recount their own count |
@@ -63,6 +63,24 @@ sign-in under the same username and switches the old one off
 `firestore.rules` only gives access to signed-in, active accounts, lets staff
 change nothing but counts saved under their own ID, and keeps the activity
 log append-only. Tests: `cd tests && npm install && npm test` (needs Java).
+
+## Adding to a count and Quick count
+
+Scanning an item that is already counted shows each part of its count
+(12 · Sam, + 6 · Priya) and adds to it by default: the same item on another
+shelf. **Replace total** corrects the count instead. Additions are saved as
+increments, so two people adding to one item at once can't overwrite each
+other.
+
+**Quick count** (a switch on the phone's Scan tab and the dashboard's Count
+page) makes every scan add 1, with a beep and a vibration (the iPhone app uses
+the Capacitor Haptics plugin), and shows the item's running total with
+**Undo +1**. The phone camera stays open: a barcode held in view counts once
+and counts again after it has been out of view for 1.2 s. In the iPhone app,
+if the in-page camera isn't available the system scanner reopens after every
+scan instead. Items not on the list and items waiting for a blind recount are
+refused with a low double beep. Each item gets one part per session and one
+activity-log entry a few seconds after its last scan.
 
 ## Recounts
 

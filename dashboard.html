@@ -215,6 +215,28 @@
   .qty-edit::-webkit-inner-spin-button, .qty-edit::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .item-card .actions { display: flex; gap: 10px; margin-top: 14px; }
   .item-card .meta { font-size: 12.5px; color: var(--ink-dim); margin-top: 12px; }
+  .parts-box { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; margin: 10px 0 12px; font-size: 12.5px; }
+  .parts-total { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; margin-bottom: 4px; }
+  .parts-total b { font-size: 20px; }
+  .part-line { display: flex; gap: 10px; color: var(--ink-dim); padding: 2px 0; }
+  .part-line .part-qty { min-width: 44px; color: var(--ink); font-weight: 700; }
+  .quick-toggle { display: flex; align-items: center; gap: 10px; margin-top: 14px; cursor: pointer; }
+  .quick-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .quick-toggle .switch { flex: none; width: 40px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.22); position: relative; transition: background .15s; }
+  .quick-toggle .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .quick-toggle.on .switch { background: var(--accent); }
+  .quick-toggle.on .switch::after { transform: translateX(16px); }
+  .quick-toggle b { display: block; font-size: 13.5px; }
+  .quick-toggle small { display: block; font-size: 12px; color: rgba(255,255,255,.6); }
+  .quick-card { display: flex; align-items: center; gap: 16px; margin-top: 18px; padding: 18px 20px; border-left: 4px solid var(--good); }
+  .quick-card.empty { display: block; color: var(--ink-dim); border-left-color: var(--border); }
+  .quick-card.warn { border-left-color: var(--bad); }
+  .quick-card .quick-info { flex: 1; min-width: 0; }
+  .quick-card .desc { font-weight: 700; font-size: 16px; }
+  .quick-card .code { font-size: 12px; color: var(--ink-dim); }
+  .quick-card .quick-added { font-size: 12.5px; color: var(--ink-dim); margin-top: 4px; }
+  .quick-card .quick-total { font-size: 34px; font-weight: 700; }
+  .qty-row input::placeholder { font-size: 14px; font-weight: 500; font-family: "Inter", system-ui, sans-serif; }
   .desc-input { width: 100%; max-width: 420px; margin-bottom: 12px; }
 
   /* ---------- stock check page ---------- */
@@ -535,6 +557,7 @@
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.counts = map; state.loaded.counts = true; ok();
       rebuildProducts();
+      if (state.page === "count") renderQuickCard();
     }, bad));
     unsubs.push(SC.listen(db.doc("meta/stats"), function (s) {
       state.statsCounted = s.exists ? s.data().counted || 0 : 0;
@@ -785,7 +808,11 @@
   function describe(a) {
     var parts = [el("b", { text: a.name || a.username || "Someone" }), " "];
     var label = SC.actionLabel(a.action).toLowerCase();
-    if (a.action === "count_saved" || a.action === "extra_added" || (/^recount_/.test(a.action) && a.barcode && a.qty !== undefined)) {
+    if (a.action === "count_added") {
+      parts.push(label + " ");
+      parts.push(el("b", { text: a.description || a.barcode || "an item" }));
+      parts.push(el("span", { class: "muted", text: " +" + a.qty + (a.total !== undefined ? " \u2192 " + a.total : "") }));
+    } else if (a.action === "count_saved" || a.action === "extra_added" || (/^recount_/.test(a.action) && a.barcode && a.qty !== undefined)) {
       parts.push(label + " ");
       parts.push(el("b", { text: a.description || a.barcode || "an item" }));
       parts.push(el("span", { class: "muted", text: " → " + a.qty + (a.prevQty !== null && a.prevQty !== undefined ? " (was " + a.prevQty + ")" : "") }));
@@ -926,6 +953,19 @@
     var form = el("form", { class: "scan-form" }, [input, el("button", { type: "submit", text: "Find" })]);
     form.addEventListener("submit", function (e) { e.preventDefault(); lookup(input.value); });
     hero.appendChild(form);
+    var quickToggle = el("label", { class: "quick-toggle" + (quickOn() ? " on" : "") }, [
+      el("input", { type: "checkbox" }), el("span", { class: "switch" }),
+      el("span", {}, [el("b", { text: "Quick count" }), el("small", { text: "Each scan adds 1 \u2014 no need to type a quantity." })])
+    ]);
+    var qbox = quickToggle.querySelector("input");
+    qbox.checked = quickOn();
+    qbox.addEventListener("change", function () {
+      try { localStorage.setItem("sc-quick", qbox.checked ? "1" : ""); } catch (e) {}
+      if (qbox.checked) unlockFeedback(); else flushQuickLogs();
+      state.currentScan = null;
+      renderPage();
+    });
+    hero.appendChild(quickToggle);
 
     var left = el("div", {}, [hero, el("div", { id: "countCard" })]);
     var recentCard = el("div", { class: "card" }, [el("div", { class: "card-head" }, [el("div", {}, [
@@ -943,23 +983,26 @@
           el("div", { class: "qty-cell", text: String(p.countedQty) }),
           el("div", { class: "when", text: fmtAgo(p.updatedAt) })
         ]);
-        row.addEventListener("click", function () { lookup(p.barcode); });
+        row.addEventListener("click", function () { lookup(p.barcode, true); });
         feed.appendChild(row);
       });
       recentCard.appendChild(feed);
     }
     root.appendChild(el("div", { class: "grid two" }, [left, recentCard]));
     // An open product card takes focus for its quantity; otherwise ready the scanner box
+    if (quickOn()) renderQuickCard();
     if (state.currentScan) renderCountCard(); else input.focus();
   }
 
-  async function lookup(raw) {
+  // openCard: open the item's card even in Quick count (clicked from a list, not scanned)
+  async function lookup(raw, openCard) {
     var code = String(raw || "").trim();
     if (!code) return;
     var id = sanitizeId(code);
     var input = $("#countInput");
     if (input) input.value = "";
     if (!state.catalog && state.catalogLoading) { toast("The product list is still loading \u2014 try again in a moment"); return; }
+    if (quickOn() && !openCard) { if (state.page !== "count") go("count"); quickAdd(code); return; }
     // The whole list and every count are already loaded: no lookups needed
     var product = state.products[id], extra = state.extras[id];
     state.currentScan = { id: id, barcode: code, product: product || null, extra: extra || null };
@@ -998,10 +1041,21 @@
       card.appendChild(el("div", { class: "actions" }, [el("button", { class: "btn btn-primary", type: "button", text: "Save recount", onclick: function () { saveRecountFor(sc.id, rec, q.value()); } })]));
     } else if (p) {
       card.appendChild(el("div", { class: "desc", text: p.description || "(no description)" }));
-      q = qtyRow(isCounted(p) ? p.countedQty : "");
+      // Already counted: show each part, and add to it by default (the same item
+      // on another shelf) or replace the total to correct it
+      var counted = isCounted(p), mode = counted ? (sc.mode || "add") : "set";
+      if (counted) {
+        card.appendChild(countPartsBox(state.counts[sc.id] || { qty: p.countedQty, by: p.updatedBy, at: p.updatedAt }));
+        var seg = el("div", { class: "seg", style: "margin:0 0 12px" });
+        [["add", "Add to count"], ["replace", "Replace total"]].forEach(function (m) {
+          seg.appendChild(el("button", { type: "button", class: mode === m[0] ? "active" : "", text: m[1], onclick: function () { sc.mode = m[0]; renderCountCard(); } }));
+        });
+        card.appendChild(seg);
+      }
+      q = qtyRow(mode === "replace" ? p.countedQty : "");
+      if (mode === "add") q.input.placeholder = "How many more?";
       card.appendChild(q.row);
-      card.appendChild(el("div", { class: "actions" }, [el("button", { class: "btn btn-primary", type: "button", text: isCounted(p) ? "Update count" : "Save count", onclick: function () { saveCount(sc.id, p, q.value()); } })]));
-      if (isCounted(p)) card.appendChild(el("div", { class: "meta", text: "Last counted " + p.countedQty + " by " + (p.updatedBy || "someone") + " · " + fmtWhen(p.updatedAt) }));
+      card.appendChild(el("div", { class: "actions" }, [el("button", { class: "btn btn-primary", type: "button", text: mode === "add" ? "Add to count" : mode === "replace" ? "Replace total" : "Save count", onclick: function () { saveCount(sc.id, p, q.value(), mode); } })]));
       if (rec && rec.status === "open") card.appendChild(el("p", { class: "note", text: "A recount has been requested. Someone else needs to count this item." }));
       else if (rec) card.appendChild(el("p", { class: "note", text: "Recounted by " + (rec.recountBy || "someone") + " \u2014 waiting for an admin to decide." }));
       else if (isAdmin() && isCounted(p)) card.appendChild(el("div", { style: "margin-top:10px" }, [el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Ask for a recount", onclick: function () { askRecount([sc.id]); } })]));
@@ -1040,14 +1094,36 @@
     finally { delete savingIds[id]; }
   }
 
+  // "Counted so far 18" with one line per part: 12 · Sam Lee · Sep 30 10:02
+  function countPartsBox(c) {
+    var box = el("div", { class: "parts-box" });
+    box.appendChild(el("div", { class: "parts-total" }, [el("span", { text: "Counted so far" }), el("b", { class: "mono", text: String(c.qty) })]));
+    SC.countParts(c).forEach(function (x, i) {
+      box.appendChild(el("div", { class: "part-line" }, [
+        el("span", { class: "mono part-qty", text: (i ? "+ " : "") + x.qty }),
+        el("span", { text: (x.by || "someone") + (x.at ? " \u00b7 " + fmtWhen(x.at) : "") })
+      ]));
+    });
+    return box;
+  }
+
   var savingIds = {};
-  async function saveCount(id, p, qty) {
+  // mode: "set" (first count), "add" (add qty as a new part) or "replace" (new total)
+  async function saveCount(id, p, qty, mode) {
     if (qty === null) { toast("Enter a quantity"); return; }
+    if (mode === "add" && !(qty > 0)) { toast("Enter how many to add"); return; }
     if (savingIds[id]) return; // a double click must not count the item twice
     savingIds[id] = true;
+    var item = { id: id, barcode: p.barcode || id, description: p.description || "" }, before = state.counts[id] || null;
     try {
-      await SC.saveCount({ id: id, barcode: p.barcode || id, description: p.description || "" }, qty, state.counts[id] || null);
-      toast("Saved: " + qty);
+      if (mode === "add" && before) {
+        await SC.addToCount(item, qty, null, before);
+        SC.log("count_added", { barcode: item.barcode, description: item.description, qty: qty, total: before.qty + qty });
+        toast("Added " + qty + " \u2014 total " + (before.qty + qty));
+      } else {
+        await SC.saveCount(item, qty, before);
+        toast("Saved: " + qty);
+      }
       state.currentScan = null;
       if (state.page === "count") renderPage();
     } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
@@ -1121,10 +1197,10 @@
         // Waiting for a blind recount: don't show the first number to the people who may do it
         var hide = rec && rec.status === "open" && !isAdmin() && rec.firstByUid !== state.user.uid;
         var qtyTd = el("td", { class: "r" });
-        if (hide) qtyTd.appendChild(el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Recount", onclick: function () { lookup(p.barcode); } }));
+        if (hide) qtyTd.appendChild(el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Recount", onclick: function () { lookup(p.barcode, true); } }));
         else {
           var qb = el("button", { type: "button", class: "qty-btn qty-cell" + (c ? "" : " dash"), text: c ? String(p.countedQty) : "—", title: "Click to enter a count" });
-          qb.addEventListener("click", function () { if (rec && rec.status === "open" && rec.firstByUid !== state.user.uid) lookup(p.barcode); else editQty(qtyTd, p); });
+          qb.addEventListener("click", function () { if (rec && rec.status === "open" && rec.firstByUid !== state.user.uid) lookup(p.barcode, true); else editQty(qtyTd, p); });
           qtyTd.appendChild(qb);
         }
         var status = [el("span", { class: "pill " + (rec ? "warn" : c ? "good" : "idle"), text: rec ? (rec.status === "open" ? "Recount requested" : "Recounted") : c ? "Counted" : "Not counted" })];
@@ -1160,6 +1236,106 @@
       var p = state.products[id];
       return isCounted(p) && (!q || String(p.barcode).toLowerCase().indexOf(q) !== -1 || String(p.description || "").toLowerCase().indexOf(q) !== -1);
     });
+  }
+
+  /* ---------------- quick count ----------------
+   * Every scan adds 1 (USB / Bluetooth scanners on the Count page), with a
+   * beep. Each item gets one part per session and one activity entry a few
+   * seconds after its last scan. Counts are already loaded, so no reads. */
+  function quickOn() { try { return localStorage.getItem("sc-quick") === "1"; } catch (e) { return false; } }
+  var quick = { items: {}, last: null };
+
+  function quickAdd(code) {
+    var input = $("#countInput");
+    if (input) { input.value = ""; input.focus(); }
+    state.currentScan = null;
+    var cardHolder = $("#countCard");
+    if (cardHolder) cardHolder.innerHTML = "";
+    var id = sanitizeId(code), p = state.products[id];
+    if (!state.catalog) { feedback(false); quickMessage(code, "No product list loaded."); return; }
+    if (!p) { feedback(false); quickMessage(code, "Not on the product list. Turn Quick count off to add it as an extra item."); return; }
+    var rec = state.recounts[id];
+    if (rec && rec.status === "open" && rec.firstByUid !== state.user.uid) {
+      feedback(false); quickMessage(code, (p.description || code) + " is waiting for a recount. Turn Quick count off and count it on its card."); return;
+    }
+    var e = quick.items[id];
+    if (e && e.listId !== state.catalog.listId) e = null; // a new stock check started
+    if (!e) e = quick.items[id] = { id: id, listId: state.catalog.listId, item: { id: id, barcode: p.barcode, description: p.description || "" }, partId: SC.newPartId(), added: 0, unlogged: 0, written: false };
+    quick.last = e;
+    var before = e.written ? { parts: true } : (state.counts[id] || null);
+    e.written = true;
+    e.added += 1; e.unlogged += 1;
+    feedback(true);
+    SC.addToCount(e.item, 1, e.partId, before).catch(function (err) {
+      e.added -= 1; e.unlogged -= 1; feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); renderQuickCard();
+    });
+    scheduleQuickLog(e);
+    renderQuickCard();
+  }
+  function quickTotal(e) { var c = state.counts[e.id]; return c ? c.qty : 0; }
+  function quickUndo() {
+    var e = quick.last;
+    if (!e || e.added <= 0) return;
+    e.added -= 1; e.unlogged -= 1;
+    SC.addToCount(e.item, -1, e.partId, { parts: true }).catch(function (err) { toast("Couldn't undo: " + SC.friendlyError(err)); });
+    scheduleQuickLog(e);
+    renderQuickCard();
+  }
+  function scheduleQuickLog(e) { clearTimeout(e.timer); e.timer = setTimeout(function () { logQuick(e); }, 8000); }
+  function logQuick(e) {
+    clearTimeout(e.timer);
+    if (!e.unlogged) return;
+    SC.log("count_added", { barcode: e.item.barcode, description: e.item.description, qty: e.unlogged, total: quickTotal(e) });
+    e.unlogged = 0;
+  }
+  function flushQuickLogs() { Object.keys(quick.items).forEach(function (id) { logQuick(quick.items[id]); }); }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) flushQuickLogs(); });
+  window.addEventListener("pagehide", flushQuickLogs);
+
+  function renderQuickCard() {
+    var holder = $("#countCard");
+    if (!holder || !quickOn() || state.currentScan) return;
+    holder.innerHTML = "";
+    var e = quick.last;
+    if (!e) { holder.appendChild(el("div", { class: "card quick-card empty", text: "Scan an item: each scan adds 1." })); return; }
+    holder.appendChild(el("div", { class: "card quick-card" }, [
+      el("div", { class: "quick-info" }, [
+        el("div", { class: "desc", text: e.item.description || "(no description)" }),
+        el("div", { class: "code mono", text: e.item.barcode }),
+        el("div", { class: "quick-added", text: "+" + e.added + " this session" })
+      ]),
+      el("div", { class: "quick-total mono", text: String(quickTotal(e)) }),
+      el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Undo +1", disabled: e.added <= 0 ? "disabled" : null, onclick: quickUndo })
+    ]));
+  }
+  function quickMessage(code, text) {
+    var holder = $("#countCard");
+    if (!holder) return;
+    holder.innerHTML = "";
+    holder.appendChild(el("div", { class: "card quick-card warn" }, [el("div", { class: "quick-info" }, [
+      el("div", { class: "code mono", text: code }), el("div", { class: "quick-added", text: text })])]));
+  }
+
+  // Beep: ok = counted, otherwise a low double beep. Browsers allow sound only
+  // after a click or key press, which a scanner's typing counts as.
+  var audioCtx = null;
+  function unlockFeedback() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !audioCtx) audioCtx = new AC();
+      if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) {}
+  }
+  document.addEventListener("keydown", function () { if (quickOn()) unlockFeedback(); }, true);
+  document.addEventListener("pointerdown", function () { if (quickOn()) unlockFeedback(); }, true);
+  function tone(freq, start, dur) {
+    var o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + start;
+    o.type = "square"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function feedback(ok) {
+    try { if (audioCtx) { if (ok) tone(1350, 0, 0.09); else { tone(260, 0, 0.14); tone(220, 0.18, 0.18); } } } catch (e) {}
   }
 
   /* ---------------- recounts ---------------- */
@@ -1198,7 +1374,7 @@
       mine.forEach(function (r) {
         feed.appendChild(el("div", { class: "feed-row", style: "grid-template-columns: minmax(0,1fr) auto" }, [
           el("div", { class: "what" }, [el("div", { text: r.description || r.barcode, style: "font-weight:600" }), el("div", { class: "mono", text: r.barcode, style: "font-size:12px;color:var(--ink-dim)" })]),
-          el("button", { class: "btn btn-primary btn-sm", type: "button", text: "Recount", onclick: function () { lookup(r.barcode); } })
+          el("button", { class: "btn btn-primary btn-sm", type: "button", text: "Recount", onclick: function () { lookup(r.barcode, true); } })
         ]));
       });
       todo.appendChild(feed);
@@ -1276,10 +1452,10 @@
   }
 
   function exportResults() {
-    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Counted By", "Counted At"]];
+    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Counted By", "Counted At", "Count Parts"]];
     Object.keys(state.products).forEach(function (id) {
       var p = state.products[id], c = isCounted(p);
-      aoa.push([p.barcode || id, p.description || "", c ? p.countedQty : "", c ? "Counted" : "Not counted", c ? p.updatedBy || "" : "", c ? fmtWhen(p.updatedAt) : ""]);
+      aoa.push([p.barcode || id, p.description || "", c ? p.countedQty : "", c ? "Counted" : "Not counted", c ? p.updatedBy || "" : "", c ? fmtWhen(p.updatedAt) : "", SC.partsText(state.counts[id])]);
     });
     var extraIds = Object.keys(state.extras);
     if (extraIds.length) {
@@ -1303,7 +1479,7 @@
     ["staff", "Staff & passwords"]
   ];
   function actionGroup(a) {
-    if (a === "count_saved" || a === "extra_added" || /^recount_/.test(a)) return "counts";
+    if (a === "count_saved" || a === "count_added" || a === "extra_added" || /^recount_/.test(a)) return "counts";
     if (a === "login" || a === "logout") return "sign";
     if (a === "import" || a === "reset_counts" || a === "export" || a === "stock_deleted") return "stock";
     return "staff";
@@ -1363,7 +1539,11 @@
       var tb = el("tbody");
       rows.forEach(function (a) {
         var qtyTd = el("td", { class: "r num" });
-        if (a.qty !== undefined && a.qty !== null) {
+        if (a.action === "count_added" && a.qty !== undefined) {
+          // Added to a count: "+6 → 18"
+          qtyTd.appendChild(el("span", { class: "delta " + (a.qty >= 0 ? "up" : "down"), text: (a.qty >= 0 ? "+" : "") + a.qty }));
+          if (a.total !== undefined) { qtyTd.appendChild(el("span", { class: "dim", text: " → " })); qtyTd.appendChild(el("b", { text: String(a.total) })); }
+        } else if (a.qty !== undefined && a.qty !== null) {
           if (a.prevQty !== undefined && a.prevQty !== null && a.prevQty !== a.qty) {
             var diff = a.qty - a.prevQty;
             qtyTd.appendChild(el("span", { class: "dim", text: a.prevQty + " → " }));
