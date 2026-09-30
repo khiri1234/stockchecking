@@ -65,8 +65,11 @@
   nav.side-nav button.active { background: var(--accent-bg); color: var(--accent-2); }
   nav.side-nav .nav-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-muted); font-weight: 700; padding: 14px 12px 4px; }
   .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
-  .side-logo { margin: 18px 12px 0; }
-  .side-logo img { display: block; width: 100%; max-width: 180px; height: auto; border-radius: 14px; box-shadow: var(--shadow); }
+  /* Brand block under the menu, laid out like the Al Hor POS sidebar */
+  .side-brand { margin-top: 40px; padding: 24px 8px 4px; text-align: center; border-top: 1px solid var(--border); }
+  .side-brand img { width: 56px; height: auto; margin-bottom: 12px; filter: brightness(0); opacity: .82; }
+  .side-brand-name { font-size: 15px; font-weight: 700; color: var(--ink-dim); letter-spacing: .04em; line-height: 1.5; }
+  .side-brand-phone { font-size: 20px; font-weight: 700; color: var(--ink-dim); font-family: "IBM Plex Mono", monospace; margin-top: 8px; }
   .me { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: var(--radius); background: var(--surface-3); border: 1px solid var(--border); cursor: pointer; text-align: left; width: 100%; }
   .me:hover { border-color: var(--ink-muted); }
   .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--ink); color: var(--bg); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
@@ -256,7 +259,7 @@
     aside.side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 12px 16px; }
     nav.side-nav { flex-direction: row; overflow-x: auto; flex: 1 1 100%; order: 3; }
     nav.side-nav .nav-label { display: none; }
-    .side-logo { display: none; }
+    .side-brand { display: none; }
     .side-foot { margin: 0 0 0 auto; flex-direction: row; }
     main.content { padding: 18px 16px 50px; }
   }
@@ -270,7 +273,11 @@
       <div><b>The H Stock</b><small>Management dashboard</small></div>
     </div>
     <nav class="side-nav" id="nav"></nav>
-    <div class="side-logo"><img src="logo.png" alt="The H Stock Management"></div>
+    <div class="side-brand">
+      <img src="logo.png" alt="">
+      <div class="side-brand-name">The H<br>Stock Management</div>
+      <div class="side-brand-phone">0555044482</div>
+    </div>
     <div class="side-foot">
       <button class="me" id="meBtn" type="button"><div class="avatar" id="meAvatar">?</div><div class="who"><b id="meName">&hellip;</b><span id="meRole"></span></div></button>
       <a class="side-link" href="index.html?mobile">Open phone view</a>
