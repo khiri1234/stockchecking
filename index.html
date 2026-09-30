@@ -14,7 +14,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script src="common.js"></script>
+<!-- The page's publish date on common.js's address, so a browser holding an
+     older copy of common.js fetches the one that matches this page -->
+<script>document.write('<script src="common.js?v=' + encodeURIComponent(document.lastModified) + '"><\/script>');</script>
 <style>
   :root {
     --bg: #EDEFF2;
