@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>The H Stock Management</title>
+<link rel="icon" type="image/png" href="app-icon.png">
+<link rel="apple-touch-icon" href="resources/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -101,9 +103,9 @@
   .brand { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
   .brand-mark { display: flex; align-items: center; gap: 9px; }
   .brand-mark .glyph {
-    width: 34px; height: 34px; border-radius: 9px; background: var(--ink); color: var(--bg);
-    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 34px; height: 34px; border-radius: 9px; overflow: hidden; flex-shrink: 0;
   }
+  .glyph img { display: block; width: 100%; height: 100%; }
   .brand h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0; font-family: "Space Grotesk", sans-serif; }
   .brand .session-name { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
   .staff-chip {
@@ -337,7 +339,7 @@
   body.signed-out #app { visibility: hidden; }
   .auth-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 26px 22px 22px; box-shadow: var(--shadow-lg); }
   .auth-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }
-  .auth-brand .glyph { width: 42px; height: 42px; border-radius: 11px; background: var(--ink); color: var(--bg); display: flex; align-items: center; justify-content: center; }
+  .auth-brand .glyph { width: 42px; height: 42px; border-radius: 11px; overflow: hidden; flex-shrink: 0; }
   .auth-brand h1 { margin: 0; font-size: 22px; font-family: "Space Grotesk", sans-serif; }
   .auth-sub { font-size: 13px; color: var(--ink-dim); line-height: 1.5; margin: 0 0 18px; }
   .auth-field { display: block; margin-bottom: 12px; }
@@ -354,9 +356,7 @@
   <header class="top">
     <div class="brand">
       <div class="brand-mark">
-        <div class="glyph">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>
-        </div>
+        <div class="glyph"><img src="app-icon.png" alt=""></div>
         <div>
           <h1>Stock check</h1>
           <div class="session-name" id="sessionName">Loading&hellip;</div>
@@ -477,7 +477,7 @@
   /* ---------------------------------------------------------------
    * Platform helpers
    * ------------------------------------------------------------- */
-  // Capacitor plugin when running inside the iOS app, else null
+  // Capacitor plugin when running inside the iOS or Android app, else null
   function nativePlugin(name) {
     var C = window.Capacitor;
     if (!C || !C.isNativePlatform || !C.isNativePlatform()) return null;
@@ -485,7 +485,7 @@
     return C.registerPlugin ? C.registerPlugin(name) : (C.Plugins && C.Plugins[name]) || null;
   }
 
-  // iOS app: write the file to the cache folder and open the share sheet
+  // iOS and Android apps: write the file to the cache folder and open the share sheet
   var nativeDownloads = {
     save: async function (opts) {
       var Filesystem = nativePlugin("Filesystem");
@@ -590,7 +590,7 @@
 
     var card = el("div", { class: "auth-card" });
     card.appendChild(el("div", { class: "auth-brand" }, [
-      el("div", { class: "glyph", html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>' }),
+      el("div", { class: "glyph", html: '<img src="app-icon.png" alt="">' }),
       el("h1", { text: "The H Stock Management" })
     ]));
     card.appendChild(el("p", { class: "auth-sub", text: mode === "setup"
@@ -1598,7 +1598,7 @@
   function openCameraScanner() {
     var nativeScanner = nativePlugin("CapacitorBarcodeScanner");
     if (nativeScanner) {
-      // iOS app: full-screen system camera scanner
+      // iOS and Android apps: full-screen system camera scanner
       nativeScanner.scanBarcode({
         hint: 17, // all barcode formats
         scanInstructions: "Point the camera at a barcode",
@@ -2170,6 +2170,21 @@
     if (state.user) openAccountMenu(); else showAuthScreen("");
   });
 
+  // Android's Back button (the Android app only): closes whatever is open,
+  // then goes back to the Scan tab, then leaves the app in the background
+  function initBackButton() {
+    var App = nativePlugin("App");
+    if (!App || !App.addListener) return;
+    App.addListener("backButton", function () {
+      if ($("#camOverlay")) { closeCameraScanner(); return; }
+      var modal = $("#modalRoot").lastElementChild;
+      if (modal) { modal.remove(); return; }
+      if (state.currentScan) { state.currentScan = null; renderScannedCard(); return; }
+      if (state.activeTab !== "scan") { switchTab("scan"); return; }
+      App.minimizeApp().catch(function () { App.exitApp(); });
+    });
+  }
+
   (async function boot() {
     // Computers get the desktop dashboard; add ?mobile to the URL to stay here
     if (!SC.isNative() && window.matchMedia("(min-width: 1024px)").matches && !/[?&]mobile\b/.test(location.search)) {
@@ -2178,6 +2193,7 @@
     }
     state.quickCount = lsGet("sc-quick") === "1";
     await initCapabilities();
+    initBackButton();
     renderStaffChip();
     switchTab("scan");
     if (state.dbApi) {

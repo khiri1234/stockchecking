@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">The H Stock Management</string>
+    <string name="title_activity_main">The H Stock Management</string>
+    <string name="package_name">com.khiri1234.stockcheck</string>
+    <string name="custom_url_scheme">com.khiri1234.stockcheck</string>
+</resources>

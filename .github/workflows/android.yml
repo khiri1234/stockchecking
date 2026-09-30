@@ -1,0 +1,110 @@
+# Builds the Android app:
+#   The-H-Stock-Management-Android: The-H-Stock-Management-x.y.apk, to install
+#     straight onto phones (signed with the fixed test key in
+#     android/app/sideload.keystore, so each new APK installs as an update)
+#   The-H-Stock-Management-Android-Play: app-release.aab for Google Play, only
+#     when these repository secrets exist (Settings -> Secrets and variables ->
+#     Actions):
+#       ANDROID_KEYSTORE           upload key (.jks / .keystore), base64
+#       ANDROID_KEYSTORE_PASSWORD  its password
+#       ANDROID_KEY_ALIAS          the key's alias
+#       ANDROID_KEY_PASSWORD       the key's password (often the same)
+# Download them from the run's "Artifacts" section on the Actions tab.
+name: Android app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - android/**
+      - index.html
+      - common.js
+      - scripts/build.js
+      - capacitor.config.json
+      - package.json
+      - package-lock.json
+      - .github/workflows/android.yml
+  push:
+    branches: [main]
+    paths:
+      - android/**
+      - index.html
+      - common.js
+      - scripts/build.js
+      - capacitor.config.json
+      - package.json
+      - package-lock.json
+      - .github/workflows/android.yml
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Each run is a newer version: 1.<run>, version code 100 + run
+      - name: Set the version
+        run: |
+          echo "ANDROID_VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_NAME=1.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install web libraries
+        run: npm ci
+
+      - name: Build the web app into the Android project
+        run: |
+          npm run build
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk "../dist/The-H-Stock-Management-$ANDROID_VERSION_NAME.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: The-H-Stock-Management-Android
+          path: dist/*.apk
+          retention-days: 90
+
+      - name: Build Google Play bundle
+        id: play
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE secret: skipping the Google Play bundle"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.keystore"
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/upload.keystore"
+          ./gradlew bundleRelease --no-daemon
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.play.outputs.built == 'true'
+        with:
+          name: The-H-Stock-Management-Android-Play
+          path: android/app/build/outputs/bundle/release/*.aab
+          retention-days: 90
