@@ -170,7 +170,7 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 ## Android app
 
 The `android/` folder is the same Capacitor app for Android phones (Android
-7 or later): the camera button opens the native barcode scanner, Export opens
+8 or later): the camera button opens the native barcode scanner, Export opens
 the Android share sheet, Quick count vibrates, and the phone's Back button
 closes whatever is open, then returns to Scan, then leaves the app.
 
