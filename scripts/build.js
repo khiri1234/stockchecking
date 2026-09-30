@@ -46,7 +46,8 @@ for (const page of pages) {
   fs.writeFileSync(path.join(out, page), html);
 }
 
-// Shared sign-in / Firebase code
+// Shared sign-in / Firebase code, and the logo shown on the dashboard
 fs.copyFileSync(path.join(root, "common.js"), path.join(out, "common.js"));
+fs.copyFileSync(path.join(root, "logo.png"), path.join(out, "logo.png"));
 
 console.log("Built " + path.relative(root, out) + "/ (" + pages.join(", ") + ")");
