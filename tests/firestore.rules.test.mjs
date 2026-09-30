@@ -2,7 +2,7 @@
 // (starts the Firestore emulator; needs Java 11+).
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
-import { doc, setDoc, getDoc, updateDoc, deleteDoc, writeBatch, collection, addDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, writeBatch, collection, addDoc, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-stockcheck', firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 } });
 let pass = 0, fail = 0;
@@ -88,6 +88,26 @@ await t('staff cannot delete a recount', assertFails(deleteDoc(doc(bob, 'recount
 await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'recounts/456'), Object.assign({}, rec, { barcode: '456', firstByUid: 'bob', firstBy: 'Bob' })));
 await t('first counter cannot recount their own count', assertFails(updateDoc(doc(bob, 'recounts/456'), recount(3, 'bob'))));
 await t('admin closes a recount', assertSucceeds(deleteDoc(doc(alice, 'recounts/123'))));
+
+// --- areas ---
+await t('admin adds area', assertSucceeds(setDoc(doc(alice, 'areas/a1'), { name: 'Aisle 3', order: 1 })));
+await t('staff reads areas', assertSucceeds(getDocs(collection(bob, 'areas'))));
+await t('staff cannot add area', assertFails(setDoc(doc(bob, 'areas/a2'), { name: 'Mine' })));
+await t('inactive cannot read areas', assertFails(getDoc(doc(carl, 'areas/a1'))));
+
+// --- tasks ---
+await t('admin assigns task', assertSucceeds(setDoc(doc(alice, 'tasks/t1'), { uid: 'bob', name: 'Bob', areaId: 'a1', items: ['123'], itemCount: 1, done: false })));
+await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'tasks/t2'), { uid: 'alice', name: 'Alice', items: [], done: false }));
+await t('staff reads own task', assertSucceeds(getDoc(doc(bob, 'tasks/t1'))));
+await t('staff cannot read others task', assertFails(getDoc(doc(bob, 'tasks/t2'))));
+await t('staff lists own tasks', assertSucceeds(getDocs(query(collection(bob, 'tasks'), where('uid', '==', 'bob')))));
+await t('staff cannot list all tasks', assertFails(getDocs(collection(bob, 'tasks'))));
+await t('staff marks own task done', assertSucceeds(updateDoc(doc(bob, 'tasks/t1'), { done: true, doneAt: 'x' })));
+await t('staff cannot change task items', assertFails(updateDoc(doc(bob, 'tasks/t1'), { items: ['1', '2'] })));
+await t('staff cannot take others task', assertFails(updateDoc(doc(bob, 'tasks/t2'), { done: true })));
+await t('staff cannot create task', assertFails(setDoc(doc(bob, 'tasks/t3'), { uid: 'bob', items: [], done: false })));
+await t('staff cannot delete task', assertFails(deleteDoc(doc(bob, 'tasks/t1'))));
+await t('admin deletes task', assertSucceeds(deleteDoc(doc(alice, 'tasks/t1'))));
 
 // --- old-format product lists ---
 await t('staff cannot write old products', assertFails(setDoc(doc(bob, 'products/9'), { barcode: '9', description: 'X' })));

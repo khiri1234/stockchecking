@@ -58,6 +58,7 @@
     // Offline cache: counts saved without signal are sent once back online
     if (!window.FIREBASE_EMULATORS) {
       try { await db.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
+      checkRestoredWrites();
     }
     return { db: db, auth: auth };
   }
@@ -164,7 +165,12 @@
     recount_requested: "Asked for a recount",
     recount_saved: "Recounted",
     recount_accepted: "Used the recount",
-    recount_kept: "Kept the first count"
+    recount_kept: "Kept the first count",
+    area_added: "Added area",
+    area_renamed: "Renamed area",
+    area_deleted: "Deleted area",
+    task_assigned: "Assigned a task",
+    task_done: "Finished a task"
   };
 
   /* ---------------- stock data ----------------
@@ -252,9 +258,52 @@
     return catalogCache.promise;
   }
 
+  /* ---------------- saving without signal ----------------
+   * Firestore keeps writes made offline on the device and sends them when the
+   * connection returns, but its promises only resolve once the server has
+   * them. track() lets the app carry on: it resolves when the server has the
+   * write, or after QUEUE_MS if it's still waiting, and counts the writes still
+   * waiting so the pages can show "3 counts waiting to upload". A write that
+   * fails after that is reported through onWriteError. */
+  var QUEUE_MS = 1500;
+  var sync = { online: typeof navigator === "undefined" || navigator.onLine !== false, waiting: 0, restored: false };
+  var syncListeners = [], writeErrorListeners = [];
+  function notifySync() { var s = Object.assign({}, sync); syncListeners.forEach(function (f) { try { f(s); } catch (e) {} }); }
+  function onSync(cb) { syncListeners.push(cb); cb(Object.assign({}, sync)); }
+  function onWriteError(cb) { writeErrorListeners.push(cb); }
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", function () { sync.online = true; notifySync(); });
+    window.addEventListener("offline", function () { sync.online = false; notifySync(); });
+  }
+  function track(p) {
+    var queued = false;
+    var timer = setTimeout(function () { queued = true; sync.waiting++; notifySync(); }, QUEUE_MS);
+    function settle() { clearTimeout(timer); if (queued) { sync.waiting--; notifySync(); } }
+    p.then(settle, function (e) { settle(); if (queued) writeErrorListeners.forEach(function (f) { f(e); }); });
+    return new Promise(function (resolve, reject) {
+      setTimeout(function () { if (queued) resolve({ queued: true }); }, QUEUE_MS + 1);
+      p.then(function () { if (!queued) resolve({ queued: false }); }, function (e) { if (!queued) reject(e); });
+    });
+  }
+  // Writes saved in an earlier visit that are still waiting (the offline cache keeps them)
+  function checkRestoredWrites() {
+    if (!db || typeof db.waitForPendingWrites !== "function") return;
+    var done = false;
+    db.waitForPendingWrites().then(function () { done = true; if (sync.restored) { sync.restored = false; notifySync(); } }, function () {});
+    setTimeout(function () { if (!done) { sync.restored = true; notifySync(); } }, 2500);
+  }
+
+  // The item's count, or null if it has none. Without signal it falls back to
+  // the copy on this device; if there is none it throws code "unavailable".
   async function getCount(id) {
-    var snap = await db.doc("counts/" + id).get();
-    return snap.exists ? snap.data() : null;
+    var ref = db.doc("counts/" + id);
+    try {
+      var snap = await withTimeout(ref.get(), 4000);
+      return snap.exists ? snap.data() : null;
+    } catch (e) {
+      var cached = await ref.get({ source: "cache" }).catch(function () { throw err("unavailable"); });
+      return cached.exists ? cached.data() : null;
+    }
   }
 
   /* A count is made of parts: parts/{partId} = { qty, by, byUid, at }, and
@@ -275,6 +324,26 @@
       .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
   }
 
+  // Admins: makes each count's total the sum of its parts again where they
+  // differ. Returns how many were fixed.
+  async function fixCountTotals(counts) {
+    var ids = Object.keys(counts).filter(function (id) {
+      var c = counts[id];
+      if (!c || !c.parts || typeof c.parts !== "object") return false;
+      var sum = countParts(c).reduce(function (t, x) { return t + (x.qty || 0); }, 0);
+      return sum !== c.qty;
+    });
+    for (var i = 0; i < ids.length; i += 400) {
+      var batch = db.batch();
+      ids.slice(i, i + 400).forEach(function (id) {
+        var sum = countParts(counts[id]).reduce(function (t, x) { return t + (x.qty || 0); }, 0);
+        batch.update(db.doc("counts/" + id), { qty: Math.max(0, sum) });
+      });
+      await batch.commit();
+    }
+    return ids.length;
+  }
+
   // "12 + 6 = 18", or "" for a single part
   function partsText(c) {
     var parts = countParts(c);
@@ -282,7 +351,14 @@
     return parts.map(function (x) { return x.qty; }).join(" + ") + " = " + c.qty;
   }
 
-  function part(qty, at) { return { qty: qty, by: profile.name, byUid: profile.uid, at: at }; }
+  // The area being counted on this device ({ id, name } or null), stored on each part
+  var area = null;
+  function setArea(a) { area = a && a.id ? { id: a.id, name: a.name || "" } : null; }
+  function part(qty, at) {
+    var p = { qty: qty, by: profile.name, byUid: profile.uid, at: at };
+    if (area) { p.area = area.id; p.areaName = area.name; }
+    return p;
+  }
 
   // Replaces the whole count. item: { id, barcode, description };
   // before: the item's existing count doc (or null)
@@ -295,26 +371,30 @@
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     });
     if (!before) batch.set(db.doc("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
-    await batch.commit();
+    var res = await track(batch.commit());
     log("count_saved", { barcode: item.barcode, description: item.description || "", qty: qty, prevQty: before ? before.qty : null });
+    return res;
   }
 
   // Adds n (may be negative, to undo) to the count as part partId (a new part
   // unless given; Quick count keeps adding to one part per item). before: the
-  // item's count doc as last seen, or null if it had none. Resolves when the
-  // server has it.
+  // item's count doc as last seen, or null if it had none. Resolves as track()
+  // does: when the server has it, or once it's kept on the device.
   function addToCount(item, n, partId, before) {
     var inc = firebase.firestore.FieldValue.increment, now = new Date().toISOString(), parts = {};
     // A count saved without parts (older versions, recount results) keeps its total as the first part
     if (before && !before.parts) parts.all = { qty: before.qty, by: before.by || "", byUid: before.byUid || "", at: before.at || now };
-    parts[partId || newPartId()] = { qty: inc(n), by: profile.name, byUid: profile.uid, at: now };
+    // A new part is written as a plain number, so if a write is ever applied
+    // twice (signal lost before the server's answer arrived) the total no longer
+    // matches the parts and an admin's dashboard puts it right (fixCountTotals)
+    parts[partId || newPartId()] = part(partId ? inc(n) : n, now);
     var batch = db.batch();
     batch.set(db.doc("counts/" + item.id), {
       barcode: item.barcode, description: item.description || "", qty: inc(n),
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     }, { merge: true });
     if (!before) batch.set(db.doc("meta/stats"), { counted: inc(1) }, { merge: true });
-    return batch.commit();
+    return track(batch.commit());
   }
 
   // Deletes every document in a collection, 400 per batch; returns how many
@@ -364,6 +444,7 @@
     await deleteAll("counts");
     await deleteAll("extras");
     await deleteAll("recounts");
+    await deleteAll("tasks"); // tasks belong to one stock check; areas stay
     await deleteAll("products"); // lists saved before this format
     await db.doc("meta/stats").set({ counted: 0 });
     await db.doc("meta/session").set({
@@ -438,9 +519,9 @@
   }
 
   async function saveRecount(id, rec, qty) {
-    await db.doc("recounts/" + id).update({
+    await track(db.doc("recounts/" + id).update({
       status: "done", recountQty: qty, recountBy: profile.name, recountByUid: profile.uid, recountAt: new Date().toISOString()
-    });
+    }));
     log("recount_saved", { barcode: rec.barcode, description: rec.description || "", qty: qty });
   }
 
@@ -463,6 +544,41 @@
 
   async function cancelRecount(id) { await db.doc("recounts/" + id).delete(); }
 
+  /* ---------------- areas and tasks ----------------
+   * areas/{id} = { name, order }: places counted separately ("Aisle 3",
+   * "Warehouse"). Every part of a count records the area it was counted in.
+   * tasks/{id} = { uid, name, areaId, areaName, items: [barcodeId], note, done }:
+   * work an admin assigns to one person: an area, a list of items, or both. */
+
+  async function saveArea(name, id) {
+    name = String(name || "").trim();
+    if (!name) throw err("bad-name", "Enter a name for the area.");
+    if (id) await db.doc("areas/" + id).update({ name: name });
+    else await db.collection("areas").add({ name: name, order: Date.now(), createdAt: new Date().toISOString(), createdBy: profile.name });
+    log(id ? "area_renamed" : "area_added", { detail: name });
+  }
+  async function deleteArea(id, name) {
+    await db.doc("areas/" + id).delete();
+    log("area_deleted", { detail: name || "" });
+  }
+
+  var MAX_TASK_ITEMS = 20000; // keeps a task document well under Firestore's 1 MiB
+  // t: { uid, name, areaId, areaName, items: [barcodeId] or null, note }
+  async function createTask(t) {
+    var items = (t.items || []).slice(0, MAX_TASK_ITEMS);
+    await db.collection("tasks").add({
+      uid: t.uid, name: t.name || "", areaId: t.areaId || "", areaName: t.areaName || "",
+      items: items, itemCount: items.length, note: String(t.note || "").trim(), done: false,
+      createdAt: new Date().toISOString(), createdBy: profile.name
+    });
+    log("task_assigned", { target: t.username || "", detail: [t.areaName, items.length ? plural(items.length, "item") : ""].filter(Boolean).join(" \u00b7 ") });
+  }
+  async function deleteTask(id) { await db.doc("tasks/" + id).delete(); }
+  async function setTaskDone(task, done) {
+    await track(db.doc("tasks/" + task.id).update({ done: !!done, doneAt: done ? new Date().toISOString() : "" }));
+    if (done) log("task_done", { detail: [task.areaName, task.itemCount ? plural(task.itemCount, "item") : ""].filter(Boolean).join(" \u00b7 ") });
+  }
+
   async function resetCounts(onProgress) {
     var n = await deleteAll("counts", onProgress);
     await deleteAll("recounts");
@@ -479,6 +595,7 @@
     await deleteAll("counts");
     out.extras = await deleteAll("extras");
     await deleteAll("recounts");
+    await deleteAll("tasks");
     out.products += await deleteAll("products");
     await db.doc("meta/session").delete();
     await db.doc("meta/stats").delete();
@@ -758,6 +875,17 @@
     getCount: getCount,
     saveCount: saveCount,
     addToCount: addToCount,
+    track: track,
+    fixCountTotals: fixCountTotals,
+    onSync: onSync,
+    onWriteError: onWriteError,
+    setArea: setArea,
+    saveArea: saveArea,
+    deleteArea: deleteArea,
+    createTask: createTask,
+    deleteTask: deleteTask,
+    setTaskDone: setTaskDone,
+    MAX_TASK_ITEMS: MAX_TASK_ITEMS,
     newPartId: newPartId,
     countParts: countParts,
     partsText: partsText,

@@ -294,6 +294,26 @@
   .quick-card .sc-barcode { font-size: 12px; color: var(--ink-dim); }
   .qty-row input::placeholder { font-size: 15px; font-weight: 500; font-family: "Inter", system-ui, sans-serif; }
   .btn-sm { padding: 7px 10px; font-size: 12.5px; }
+  /* Waiting-to-upload badge under the progress bar */
+  .sync-badge { margin-top: 7px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--ink); font-size: 12.5px; font-weight: 600; }
+  .sync-badge.off { background: var(--bad-bg); color: var(--bad); }
+  /* Areas */
+  .area-pick h2 { margin-bottom: 4px; }
+  .area-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .area-grid .btn { width: 100%; }
+  .area-grid .area-none { grid-column: 1 / -1; }
+  .area-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 9px 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); font-size: 13.5px; }
+  .area-bar > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .area-pin { color: var(--accent); display: flex; }
+  .link-btn { background: none; border: 0; padding: 4px 2px; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+  /* Tasks */
+  .task-card { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); box-shadow: var(--shadow); }
+  .task-info { flex: 1; min-width: 0; }
+  .task-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .task-what { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  .task-note { font-size: 12.5px; color: var(--ink-dim); margin-top: 3px; white-space: pre-wrap; }
+  .task-bar { flex-basis: 100%; height: 6px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+  .task-bar > div { height: 100%; background: var(--accent); transition: width .3s ease; }
   .rc-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
   .rc-row:last-child { border-bottom: none; }
   .rc-row .desc { font-size: 13.5px; font-weight: 600; }
@@ -352,6 +372,7 @@
       <div class="progress-pct display" id="progressPct">0%</div>
     </div>
     <div class="progress-label" id="progressLabel">0 of 0 counted</div>
+    <div class="sync-badge" id="syncBadge" hidden></div>
     <nav class="tabs">
       <button data-tab="scan" class="active">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V4a1 1 0 0 1 1-1h3M3 17v3a1 1 0 0 0 1 1h3M21 7V4a1 1 0 0 0-1-1h-3M21 17v3a1 1 0 0 1-1 1h-3M7 8v8M11 8v8M14 8v8M17 8v8"/></svg>
@@ -398,10 +419,13 @@
     counted: 0,             // running total from meta/stats
     recent: [],             // latest counts, newest first
     recounts: {},           // id -> recounts/{id} (see common.js)
+    areas: [],              // [{ id, name }] from areas/
+    tasks: [],              // this person's tasks/ (see common.js)
+    taskCounts: {},         // id -> count doc, for the items in this person's tasks
     extras: {},             // id -> extra item data
     activeTab: "scan",
     currentScan: null,      // { id, barcode, existing product|extra or null }
-    listFilter: "all",      // all | recent
+    listFilter: "all",      // all | recent | recount | task
     quickCount: false,      // Quick count: every scan adds 1 (see quickAdd)
     listSearch: "",
   };
@@ -420,7 +444,7 @@
       else if (k.indexOf("on") === 0 && typeof attrs[k] === "function") e.addEventListener(k.slice(2), attrs[k]);
       else e.setAttribute(k, attrs[k]);
     }
-    (children || []).forEach(function (c) { if (c) e.appendChild(c); });
+    (children || []).forEach(function (c) { if (c) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return e;
   }
   function escapeHtml(s) {
@@ -740,7 +764,7 @@
   var unsubs = [];
   function startSync() {
     if (unsubs.length || !state.dbApi) return;
-    unsubs = [subscribeSession(), subscribeStats(), subscribeRecent(), subscribeExtras(), subscribeRecounts()];
+    unsubs = [subscribeSession(), subscribeStats(), subscribeRecent(), subscribeExtras(), subscribeRecounts(), subscribeAreas(), subscribeTasks()];
   }
   function stopSync() {
     unsubs.forEach(function (u) { if (u) u(); });
@@ -753,6 +777,11 @@
     state.recounts = {};
     state.extras = {};
     state.currentScan = null;
+    state.areas = [];
+    state.tasks = [];
+    state.taskListShown = false;
+    state.listFilter = "all";
+    stopTaskCounts();
   }
 
   function subscribeSession() {
@@ -809,6 +838,155 @@
       if (state.activeTab === "list") renderListRows();
     }, function (err) { console.warn("recent counts snapshot error", err); });
   }
+
+  /* ---------------------------------------------------------------
+   * Areas: staff pick where they're counting before they start; every count
+   * records it. The choice is kept on this device ("sc-area": an area id, or
+   * "none" for no specific area).
+   * ------------------------------------------------------------- */
+  function subscribeAreas() {
+    return SC.listen(state.dbApi.collection("areas"), function (snap) {
+      state.areas = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+      applyArea();
+      renderAreaBar();
+    }, function (err) { console.warn("areas snapshot error", err); });
+  }
+  function currentArea() {
+    var choice = lsGet("sc-area") || "";
+    if (!choice || choice === "none") return null;
+    return state.areas.filter(function (a) { return a.id === choice; })[0] || null;
+  }
+  // Areas exist but this device hasn't picked one (or "no specific area") yet
+  function needsArea() {
+    if (!state.areas.length) return false;
+    var choice = lsGet("sc-area") || "";
+    return !(choice === "none" || currentArea());
+  }
+  function chooseArea(id) { lsSet("sc-area", id || "none"); applyArea(); renderAreaBar(); var i = $("#scanInput"); if (i) i.focus(); }
+  function applyArea() { SC.setArea(currentArea()); }
+  function renderAreaBar() {
+    var holder = $("#areaBar");
+    if (!holder) return;
+    holder.innerHTML = "";
+    if (!state.areas.length) return;
+    if (needsArea()) {
+      var pick = el("div", { class: "panel area-pick" }, [el("h2", { text: "Where are you counting?" }),
+        el("p", { class: "hint", text: "Pick your area first. Every count you save is recorded with it." })]);
+      var grid = el("div", { class: "area-grid" });
+      state.areas.forEach(function (a) { grid.appendChild(el("button", { class: "btn btn-secondary", text: a.name, onclick: function () { chooseArea(a.id); } })); });
+      grid.appendChild(el("button", { class: "btn btn-secondary area-none", text: "No specific area", onclick: function () { chooseArea("none"); } }));
+      pick.appendChild(grid);
+      holder.appendChild(pick);
+      return;
+    }
+    var a = currentArea();
+    holder.appendChild(el("div", { class: "area-bar" }, [
+      el("span", { class: "area-pin", html: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>' }),
+      el("span", {}, ["Counting in ", el("b", { text: a ? a.name : "no specific area" })]),
+      el("button", { type: "button", class: "link-btn", text: "Change", onclick: function () { lsSet("sc-area", ""); applyArea(); renderAreaBar(); } })
+    ]));
+  }
+
+  /* ---------------------------------------------------------------
+   * Tasks: work an admin assigned to this person (an area, a list of items,
+   * or both). Staff with item tasks see only those items in the Item list.
+   * ------------------------------------------------------------- */
+  function subscribeTasks() {
+    return SC.listen(state.dbApi.collection("tasks").where("uid", "==", state.user.uid), function (snap) {
+      state.tasks = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .sort(function (a, b) { return String(a.createdAt).localeCompare(String(b.createdAt)); });
+      // A task with an area picks it, unless this device already chose one
+      var t = openTasks().filter(function (x) { return x.areaId; })[0];
+      if (t && !(lsGet("sc-area") || "") && state.areas.some(function (a) { return a.id === t.areaId; })) chooseArea(t.areaId);
+      if (hasItemTask() && state.listFilter === "all" && !state.taskListShown) { state.listFilter = "task"; state.taskListShown = true; }
+      watchTaskCounts();
+      renderTaskPanel();
+      if (state.activeTab === "list") renderListTab();
+    }, function (err) { console.warn("tasks snapshot error", err); });
+  }
+  function openTasks() { return state.tasks.filter(function (t) { return !t.done; }); }
+  function taskItemIds() {
+    var set = {};
+    openTasks().forEach(function (t) { (t.items || []).forEach(function (id) { set[id] = true; }); });
+    return Object.keys(set);
+  }
+  function hasItemTask() { return taskItemIds().length > 0; }
+  function inTask(id) { return openTasks().some(function (t) { return (t.items || []).indexOf(id) !== -1; }); }
+
+  // Live counts for the task's items: document-ID queries, 30 at a time
+  var taskCountUnsubs = [], taskCountKey = "";
+  var TASK_LIVE_MAX = 900;
+  function stopTaskCounts() { taskCountUnsubs.forEach(function (u) { u(); }); taskCountUnsubs = []; taskCountKey = ""; state.taskCounts = {}; }
+  function watchTaskCounts() {
+    var ids = taskItemIds(), key = ids.join(",");
+    if (key === taskCountKey) return;
+    stopTaskCounts();
+    taskCountKey = key;
+    var FP = firebase.firestore.FieldPath;
+    for (var i = 0; i < ids.length; i += 30) {
+      var chunk = ids.slice(i, i + 30);
+      var q = state.dbApi.collection("counts").where(FP.documentId(), "in", chunk);
+      var apply = (function (chunk) { return function (snap) {
+        chunk.forEach(function (id) { delete state.taskCounts[id]; });
+        snap.docs.forEach(function (d) { state.taskCounts[d.id] = d.data(); });
+        renderTaskPanel();
+        if (state.activeTab === "list" && state.listFilter === "task") renderListRows();
+      }; })(chunk);
+      if (ids.length <= TASK_LIVE_MAX) taskCountUnsubs.push(SC.listen(q, apply, function (e) { console.warn("task counts error", e); }));
+      else q.get().then(apply, function () {});
+    }
+  }
+  function taskProgress(t) {
+    var items = t.items || [], done = items.filter(function (id) { return state.taskCounts[id]; }).length;
+    return { done: done, total: items.length };
+  }
+  function renderTaskPanel() {
+    var holder = $("#taskPanel");
+    if (!holder) return;
+    holder.innerHTML = "";
+    openTasks().forEach(function (t) {
+      var pr = taskProgress(t);
+      var what = [t.areaName ? "Count " + t.areaName : "", pr.total ? pr.done + " of " + pr.total + " items counted" : ""].filter(Boolean).join(" \u00b7 ");
+      var card = el("div", { class: "task-card" }, [
+        el("div", { class: "task-info" }, [el("div", { class: "task-title", text: "Your task" }), el("div", { class: "task-what", text: what || "Counting" }),
+          t.note ? el("div", { class: "task-note", text: t.note }) : null]),
+        el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Mark done", onclick: function () {
+          if (pr.total && pr.done < pr.total && !window.confirm(pr.done + " of " + pr.total + " items are counted. Mark the task as done anyway?")) return;
+          SC.setTaskDone(t, true).then(function () { toast("Task marked as done"); }, function (e) { toast("Couldn't save: " + SC.friendlyError(e)); });
+        } })
+      ]);
+      if (pr.total) {
+        var bar = el("div", { class: "task-bar" }, [el("div", { style: "width:" + Math.round(pr.done / pr.total * 100) + "%" })]);
+        card.appendChild(bar);
+      }
+      holder.appendChild(card);
+    });
+  }
+  // A counted item outside this person's item tasks: counted anyway, with a note
+  function warnOutsideTask(id) {
+    if (hasItemTask() && !inTask(id)) toast("Not in your task \u2014 counted anyway");
+  }
+
+  /* ---------------------------------------------------------------
+   * Signal: a badge while counts are waiting to upload
+   * ------------------------------------------------------------- */
+  var lastWaiting = 0;
+  function renderSyncBadge(s) {
+    var b = $("#syncBadge");
+    if (!b) return;
+    var text = "", cls = "sync-badge";
+    if (!s.online && s.waiting) { text = "Offline \u2014 " + SC.plural(s.waiting, "count") + " waiting to upload"; cls += " off"; }
+    else if (!s.online) { text = "Offline \u2014 counts are kept on this phone and sent when you're back online"; cls += " off"; }
+    else if (s.waiting) text = "Uploading " + SC.plural(s.waiting, "count") + "\u2026";
+    else if (s.restored) text = "Counts saved earlier are still uploading\u2026";
+    if (lastWaiting && !s.waiting && s.online) toast("All counts uploaded \u2713");
+    lastWaiting = s.waiting;
+    b.className = cls;
+    b.textContent = text;
+    b.hidden = !text;
+  }
+  function savedToast(res, text) { toast(res && res.queued ? text + " \u2014 saved on this phone, it uploads when you're back online" : text); }
 
   function subscribeRecounts() {
     return SC.listen(state.dbApi.collection("recounts"), function (snap) {
@@ -910,6 +1088,10 @@
   function renderScanTab() {
     var root = $("#tab-scan");
     root.innerHTML = "";
+    root.appendChild(el("div", { id: "taskPanel" }));
+    root.appendChild(el("div", { id: "areaBar" }));
+    renderTaskPanel();
+    renderAreaBar();
     var hero = el("div", { class: "scan-hero" });
     hero.appendChild(el("div", { class: "laser" }));
     hero.appendChild(el("h2", { text: "Scan or enter a barcode" }));
@@ -988,6 +1170,7 @@
   async function handleScan(rawCode, openCard) {
     var code = (rawCode || "").trim();
     if (!code) return;
+    if (needsArea() && !openCard) { toast("Pick the area you're counting first"); var ai = $("#scanInput"); if (ai) ai.value = ""; return; }
     if (state.quickCount && !openCard) { var qi = $("#scanInput"); if (qi) { qi.value = ""; qi.focus(); } return quickAdd(code); }
     var id = sanitizeId(code);
     var input = $("#scanInput");
@@ -1002,10 +1185,12 @@
     var extra = state.extras[id];
 
     if (item) {
-      // One read: this item's current count, if anyone has counted it
-      var count = null;
+      // One read: this item's current count, if anyone has counted it.
+      // Without signal and no copy on this phone it's unknown (undefined).
+      var count;
       try { count = await SC.getCount(id); } catch (e) { console.warn("count lookup failed", e); }
       product = { barcode: item.barcode, description: item.description, count: count };
+      if (!openCard) warnOutsideTask(id);
     } else if (!extra && state.dbApi) {
       try {
         var esnap = await state.dbApi.doc("extras/" + id).get();
@@ -1049,7 +1234,9 @@
       card.appendChild(el("div", { class: "sc-desc", text: p.description || "(no description)" }));
       // Already counted: show each part, and add to it by default (the same item
       // on another shelf) or replace the total to correct it
-      var mode = p.count ? (sc.mode || "add") : "set";
+      var unknown = p.count === undefined;
+      var mode = p.count ? (sc.mode || "add") : unknown ? "add" : "set";
+      if (unknown) card.appendChild(el("div", { class: "banner", text: "No signal: couldn't check this item's current count. Your number will be added to it." }));
       if (p.count) {
         card.appendChild(countPartsBox(p.count));
         var modeRow = el("div", { class: "filter-row mode-row" });
@@ -1129,7 +1316,7 @@
     parts.forEach(function (x, i) {
       box.appendChild(el("div", { class: "part-line" }, [
         el("span", { class: "mono part-qty", text: (i ? "+ " : "") + x.qty }),
-        el("span", { text: (x.by || "someone") + (x.at ? " \u00b7 " + fmtWhen(x.at) : "") })
+        el("span", { text: (x.by || "someone") + (x.areaName ? " \u00b7 " + x.areaName : "") + (x.at ? " \u00b7 " + fmtWhen(x.at) : "") })
       ]));
     });
     return box;
@@ -1174,20 +1361,27 @@
     if (!sc || sc.id !== id || !sc.product || sc.saving) return;
     sc.saving = true; // a double tap must not count the item twice
     var item = { id: id, barcode: sc.product.barcode, description: sc.product.description };
-    var before = sc.product.count, me = { by: state.user.name, byUid: state.user.uid, at: nowIso() };
+    var before = sc.product.count, me = { by: state.user.name, byUid: state.user.uid, at: nowIso() }, area = currentArea();
+    if (area) { me.area = area.id; me.areaName = area.name; }
     try {
+      if (mode === "add" && before === undefined) {
+        // Current count unknown (no signal): add to whatever is there
+        savedToast(await SC.addToCount(item, qty, null, null), "Added " + qty);
+        SC.log("count_added", { barcode: item.barcode, description: item.description || "", qty: qty });
+        if (state.currentScan === sc) { state.currentScan = null; renderScannedCard(); }
+        return;
+      }
       if (mode === "add" && before) {
-        await SC.addToCount(item, qty, null, before);
+        var res = await SC.addToCount(item, qty, null, before);
         var total = before.qty + qty;
         SC.log("count_added", { barcode: item.barcode, description: item.description || "", qty: qty, total: total });
-        toast("Added " + qty + " \u2014 total " + total);
+        savedToast(res, "Added " + qty + " \u2014 total " + total);
         var parts = {};
         SC.countParts(before).forEach(function (x) { parts[x.id] = x; });
         parts[SC.newPartId()] = Object.assign({ qty: qty }, me);
         sc.product.count = Object.assign({}, before, me, { qty: total, parts: parts });
       } else {
-        await SC.saveCount(item, qty, before);
-        toast("Saved: " + qty);
+        savedToast(await SC.saveCount(item, qty, before), "Saved: " + qty);
         var p1 = {}; p1[SC.newPartId()] = Object.assign({ qty: qty }, me);
         sc.product.count = Object.assign({ qty: qty, parts: p1 }, me);
       }
@@ -1203,11 +1397,11 @@
     if (!state.dbApi) { toast("Not connected \u2014 can't save"); return; }
     try {
       var before = state.extras[id];
-      await state.dbApi.doc("extras/" + id).set({
+      var extraRes = await SC.track(state.dbApi.doc("extras/" + id).set({
         barcode: barcode, description: description, qty: qty,
         addedBy: state.staffName || "Staff", addedByUid: state.user.uid, addedAt: nowIso()
-      });
-      toast("Saved: " + qty);
+      }));
+      savedToast(extraRes, "Saved: " + qty);
       SC.log("extra_added", { barcode: barcode, description: description, qty: qty, prevQty: before ? before.qty : null });
     } catch (e) {
       toast("Couldn't save: " + (e && e.code ? e.code : "error"));
@@ -1224,8 +1418,10 @@
   async function quickAdd(code) {
     if (!state.dbApi) { feedback(false); toast("Not connected \u2014 can't save"); return; }
     if (!state.catalog) { feedback(false); toast(state.catalogLoading ? "The product list is still loading \u2014 try again in a moment" : "No product list yet"); return; }
+    if (needsArea()) { feedback(false); toast("Pick the area you're counting first"); return; }
     var id = sanitizeId(code), item = state.catalog.items[id];
     if (!item) { feedback(false); showQuickMessage(code, "Not on the product list. Turn Quick count off to add it as an extra item."); return; }
+    if (!(quick.items[id] && quick.items[id].listId === state.catalog.listId)) warnOutsideTask(id);
     var rec = state.recounts[id];
     if (rec && rec.status === "open" && rec.firstByUid !== state.user.uid) {
       feedback(false); showQuickMessage(code, item.description + " is waiting for a recount. Turn Quick count off and count it on its card."); return;
@@ -1517,6 +1713,15 @@
     var filterRow = el("div", { class: "filter-row" });
     var nRecount = recountsForMe().length;
     var filters = [["all", "Search list"], ["recent", "Recently counted"]];
+    var taskIds = taskItemIds();
+    if (taskIds.length) {
+      var nDone = taskIds.filter(function (id) { return state.taskCounts[id]; }).length;
+      filters.unshift(["task", "My task (" + nDone + "/" + taskIds.length + ")"]);
+      // Staff with a list of items to count see only their own work
+      if (!isAdmin()) filters = filters.filter(function (f) { return f[0] !== "all"; });
+    }
+    if (state.listFilter === "task" && !taskIds.length) state.listFilter = "all";
+    if (state.listFilter === "all" && taskIds.length && !isAdmin()) state.listFilter = "task";
     if (nRecount || state.listFilter === "recount") filters.push(["recount", "To recount (" + nRecount + ")"]);
     filters.forEach(function (f) {
       var b = el("button", { text: f[1] });
@@ -1561,6 +1766,23 @@
       if (!todo.length) { holder.appendChild(el("div", { class: "empty-note", text: "Nothing to recount." })); return; }
       holder.appendChild(el("div", { class: "hint", style: "margin:0 0 8px", text: "Tap an item and count it again from scratch. The earlier number is hidden on purpose." }));
       todo.forEach(function (r) { holder.appendChild(itemRow(r.barcode, r.description, null, "Recount")); });
+      return;
+    }
+
+    if (state.listFilter === "task") {
+      var ids = taskItemIds(), cat0 = state.catalog;
+      var left = ids.filter(function (id) { return !state.taskCounts[id]; });
+      holder.appendChild(el("div", { class: "hint", style: "margin:0 0 8px", text: left.length
+        ? left.length.toLocaleString() + " of " + ids.length.toLocaleString() + " still to count. Tap an item to count it."
+        : "All " + ids.length.toLocaleString() + " items in your task are counted." }));
+      // Items still to count first, then the counted ones
+      left.concat(ids.filter(function (id) { return state.taskCounts[id]; })).slice(0, 300).forEach(function (id) {
+        var it = cat0 && cat0.items[id], c = state.taskCounts[id];
+        var bc = it ? it.barcode : (c ? c.barcode : id), desc = it ? it.description : (c ? c.description : "");
+        if (hideQty(id)) holder.appendChild(itemRow(bc, desc, null, "Recount"));
+        else holder.appendChild(itemRow(bc, desc, c ? c.qty : null, c ? "Counted" : null));
+      });
+      if (ids.length > 300) holder.appendChild(el("div", { class: "hint", style: "margin:8px 0 0", text: "Showing 300 of " + ids.length.toLocaleString() + ". Counted items move to the end." }));
       return;
     }
 
@@ -1959,6 +2181,8 @@
     renderStaffChip();
     switchTab("scan");
     if (state.dbApi) {
+      SC.onSync(renderSyncBadge);
+      SC.onWriteError(function (e) { toast("A count saved offline couldn't be uploaded: " + SC.friendlyError(e)); });
       var authHeard = false;
       SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); },
         // Signed in from last time: wait for it rather than showing the sign-in screen

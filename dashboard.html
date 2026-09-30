@@ -228,6 +228,21 @@
   .quick-toggle.on .switch::after { transform: translateX(16px); }
   .quick-toggle b { display: block; font-size: 13.5px; }
   .quick-toggle small { display: block; font-size: 12px; color: rgba(255,255,255,.6); }
+  .area-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: rgba(255,255,255,.75); }
+  .area-row svg { width: 16px; height: 16px; color: var(--accent); display: block; }
+  .area-row select { flex: 1; max-width: 320px; padding: 8px 10px; border-radius: var(--radius-sm); border: 1.5px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: #fff; font: inherit; font-weight: 600; }
+  .area-row select option { color: var(--ink); background: var(--surface); }
+  .area-row select:focus { outline: none; border-color: var(--accent); }
+  .area-row.need select { border-color: var(--accent); }
+  .task-card { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; border-left: 4px solid var(--accent); }
+  .task-card .task-info { flex: 1; min-width: 200px; }
+  .task-card .task-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-2); }
+  .task-card .task-what { font-size: 15px; font-weight: 600; margin-top: 2px; }
+  .task-card .task-note { font-size: 12.5px; color: var(--ink-dim); margin-top: 3px; white-space: pre-wrap; }
+  .task-card .task-meter { flex-basis: 100%; margin-top: 2px; }
+  .area-meter { height: 5px; margin-top: 5px; min-width: 70px; }
+  .live.wait { color: var(--bad); background: var(--bad-bg); }
+  .live.wait::before { background: var(--bad); }
   .quick-card { display: flex; align-items: center; gap: 16px; margin-top: 18px; padding: 18px 20px; border-left: 4px solid var(--good); }
   .quick-card.empty { display: block; color: var(--ink-dim); border-left-color: var(--border); }
   .quick-card.warn { border-left-color: var(--bad); }
@@ -342,6 +357,8 @@
     catalogError: "",
     counts: {},          // id -> { barcode, description, qty, by, byUid, at }
     recounts: {},        // id -> recounts/{id} (see common.js)
+    areas: [],           // [{ id, name }] from areas/
+    tasks: [],           // admins: every task; staff: their own (see common.js)
     statsCounted: null,  // meta/stats.counted
     currentScan: null,
     items: { search: "", filter: "all", limit: 200 },
@@ -356,6 +373,7 @@
     activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
     staff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     recounts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M9 12l2 2 4-4"/></svg>',
+    areas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>',
     stock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
@@ -366,6 +384,7 @@
     { id: "count", label: "Count", title: "Count items" },
     { id: "items", label: "Items", title: "Items" },
     { id: "recounts", label: "Recounts", title: "Recounts" },
+    { id: "areas", label: "Areas & tasks", title: "Areas & tasks", admin: true },
     { id: "activity", label: "Activity log", title: "Activity log", admin: true },
     { id: "staff", label: "Staff", title: "Staff", admin: true },
     { id: "stock", label: "Stock check", title: "Stock check", admin: true }
@@ -539,9 +558,8 @@
   function startSync() {
     stopSync();
     var db = state.db;
-    var live = $("#liveBadge");
-    function ok() { live.className = "live"; live.textContent = "Live"; }
-    function bad(e) { console.warn(e); live.className = "live off"; live.textContent = "Offline"; }
+    function ok() { if (liveState !== "ok") { liveState = "ok"; renderLive(); } }
+    function bad(e) { console.warn(e); liveState = "bad"; renderLive(); }
     // The product list loads once per stock check; counts stream in live and
     // are merged into state.products for the tables and charts.
     // Loads the list only once the server has confirmed the stock check: reading
@@ -568,6 +586,21 @@
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
       state.recounts = map; renderNavBadges(); refresh(["recounts", "items", "count"]);
     }, bad));
+    unsubs.push(SC.listen(db.collection("areas"), function (snap) {
+      state.areas = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+      applyArea();
+      refresh(["areas", "overview", "count", "items"]);
+    }, bad));
+    var taskQuery = isAdmin() ? db.collection("tasks") : db.collection("tasks").where("uid", "==", state.user.uid);
+    unsubs.push(SC.listen(taskQuery, function (snap) {
+      state.tasks = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+      // A task with an area picks it, unless this computer already chose one
+      var t = myTasks().filter(function (x) { return x.areaId; })[0];
+      if (t && !areaChoice() && state.areas.some(function (a) { return a.id === t.areaId; })) chooseArea(t.areaId);
+      refresh(["areas", "overview", "count", "items"]);
+    }, bad));
     unsubs.push(SC.listen(db.collection("extras").limit(500), function (snap) {
       var map = {};
       snap.docs.forEach(function (d) { map[d.id] = d.data(); });
@@ -589,7 +622,85 @@
     unsubs = [];
     state.session = null; state.products = {}; state.extras = {}; state.users = []; state.activity = [];
     state.catalog = null; state.catalogError = ""; state.counts = {}; state.statsCounted = null; state.recounts = {};
+    state.areas = []; state.tasks = [];
     state.loaded = { products: false, counts: false, activity: false, users: false };
+  }
+
+  // Topbar badge: connection, plus counts saved here that haven't reached the server
+  var liveState = "connecting", syncNow = { online: true, waiting: 0 }, lastWaiting = 0;
+  function renderLive() {
+    var live = $("#liveBadge"), s = syncNow;
+    var off = liveState === "bad" || !s.online;
+    var text = liveState === "connecting" && s.online ? "Connecting" : off ? "Offline" : "Live";
+    if (s.waiting) text += off ? " \u00b7 " + SC.plural(s.waiting, "count") + " waiting to upload" : " \u00b7 uploading " + SC.plural(s.waiting, "count") + "\u2026";
+    live.className = "live" + (off || liveState === "connecting" ? " off" : "") + (s.waiting && off ? " wait" : "");
+    live.textContent = text;
+  }
+  function onSyncChange(s) {
+    syncNow = s;
+    if (lastWaiting && !s.waiting && s.online) toast("All counts uploaded \u2713");
+    lastWaiting = s.waiting;
+    renderLive();
+  }
+  function savedToast(res, text) { toast(res && res.queued ? text + " \u2014 saved on this computer, it uploads when you're back online" : text); }
+
+  /* ---------------- areas & tasks ----------------
+   * People pick where they're counting ("sc-area" on this computer: an area
+   * id, or "none"); every count part records it. */
+  function areaChoice() { try { return localStorage.getItem("sc-area") || ""; } catch (e) { return ""; } }
+  function currentArea() {
+    var c = areaChoice();
+    if (!c || c === "none") return null;
+    return state.areas.filter(function (a) { return a.id === c; })[0] || null;
+  }
+  function needsArea() {
+    if (!state.areas.length) return false;
+    return !(areaChoice() === "none" || currentArea());
+  }
+  function applyArea() { SC.setArea(currentArea()); }
+  function chooseArea(id) {
+    try { localStorage.setItem("sc-area", id || ""); } catch (e) {}
+    applyArea();
+  }
+  function areaName(id) { var a = state.areas.filter(function (x) { return x.id === id; })[0]; return a ? a.name : ""; }
+  // This person's open tasks (admins see everyone's in state.tasks)
+  function myTasks() { return state.tasks.filter(function (t) { return !t.done && state.user && t.uid === state.user.uid; }); }
+  function myTaskItems() {
+    var set = {};
+    myTasks().forEach(function (t) { (t.items || []).forEach(function (id) { set[id] = true; }); });
+    return set;
+  }
+  // Staff with item tasks see only those items
+  function taskLimited() { return !isAdmin() && Object.keys(myTaskItems()).length > 0; }
+  // Progress: items tasks count their items; area-only tasks count what the
+  // person has counted in that area
+  function taskProgress(t) {
+    var items = t.items || [];
+    if (items.length) return { done: items.filter(function (id) { return state.counts[id]; }).length, total: items.length };
+    var n = 0;
+    Object.keys(state.counts).forEach(function (id) {
+      if (SC.countParts(state.counts[id]).some(function (p) { return p.area === t.areaId && p.byUid === t.uid; })) n++;
+    });
+    return { done: n, total: 0 };
+  }
+  function taskWhat(t) {
+    return [t.areaName ? t.areaName : "", (t.items || []).length ? SC.plural(t.items.length, "item") : ""].filter(Boolean).join(" \u00b7 ") || "Counting";
+  }
+  // Items counted, units and people per area, from every count's parts
+  function areaStats() {
+    var out = {};
+    function get(k) { return out[k] || (out[k] = { items: 0, units: 0, people: {} }); }
+    Object.keys(state.counts).forEach(function (id) {
+      var seen = {};
+      SC.countParts(state.counts[id]).forEach(function (p) {
+        var k = p.area || "";
+        var a = get(k);
+        if (!seen[k]) { a.items++; seen[k] = true; }
+        a.units += p.qty || 0;
+        if (p.by) a.people[p.by] = true;
+      });
+    });
+    return out;
   }
 
   function loadCatalog() {
@@ -638,7 +749,7 @@
     state.products = map;
     state.loaded.products = !state.catalogLoading && (!!cat || !(state.session && state.session.listId));
     renderSessionLine();
-    refresh(["overview", "items", "stock", "count", "staff"]);
+    refresh(["overview", "items", "stock", "count", "staff", "areas"]);
     checkRunningTotal();
   }
 
@@ -652,6 +763,9 @@
     totalFixTimer = setTimeout(function () {
       var actual = Object.keys(state.counts).length;
       if (state.statsCounted !== actual) state.db.doc("meta/stats").set({ counted: actual }).catch(function () {});
+      // An addition applied twice (signal lost mid-save) leaves a total that
+      // doesn't match its parts
+      SC.fixCountTotals(state.counts).catch(function (e) { console.warn("count totals", e); });
     }, 4000);
   }
 
@@ -674,6 +788,8 @@
   function softRefresh() {
     if (state.page === "items") renderItemsTable();
     if (state.page === "activity") renderActivityTable();
+    if (state.page === "areas") renderAreasBody();
+    if (state.page === "count") renderCountExtras();
   }
 
   function renderSessionLine() {
@@ -725,7 +841,7 @@
   function renderPage() {
     var root = $("#page");
     root.innerHTML = "";
-    ({ overview: renderOverview, count: renderCount, items: renderItems, recounts: renderRecounts, activity: renderActivity, staff: renderStaff, stock: renderStock }[state.page] || renderOverview)(root);
+    ({ overview: renderOverview, count: renderCount, items: renderItems, recounts: renderRecounts, areas: renderAreas, activity: renderActivity, staff: renderStaff, stock: renderStock }[state.page] || renderOverview)(root);
   }
 
   /* ---------------- overview ---------------- */
@@ -770,6 +886,18 @@
     staffCard.appendChild(renderHBars(counters, st.counted));
     root.appendChild(el("div", { class: "grid two" }, [timeCard, staffCard]));
     requestAnimationFrame(function () { renderTimeChart(timeChart); });
+
+    if (state.areas.length) {
+      var ast = areaStats(), byArea = {};
+      state.areas.forEach(function (a) { byArea[a.name] = ast[a.id] ? ast[a.id].items : 0; });
+      if (ast[""]) byArea["No area"] = ast[""].items;
+      var areaCard = el("div", { class: "card", style: "margin-bottom:16px" }, [el("div", { class: "card-head" }, [
+        el("div", {}, [el("h2", { text: "By area" }), el("div", { class: "card-sub", text: "Items counted in each area" })]),
+        isAdmin() ? el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Areas & tasks", onclick: function () { go("areas"); } }) : null
+      ])]);
+      areaCard.appendChild(renderHBars(byArea, Object.keys(state.counts).length, "Items counted per area"));
+      root.appendChild(areaCard);
+    }
 
     // Recent activity (admins) + still to count
     var todo = Object.keys(state.products).map(function (id) { return state.products[id]; }).filter(function (p) { return !isCounted(p); });
@@ -835,11 +963,11 @@
   }
 
   // Horizontal bars, one series: items counted per person (sorted high to low)
-  function renderHBars(counters, total) {
+  function renderHBars(counters, total, label) {
     var names = Object.keys(counters).sort(function (a, b) { return counters[b] - counters[a]; });
     if (!names.length) return el("div", { class: "empty", text: "No counts yet." });
-    var max = counters[names[0]];
-    var wrap = el("div", { class: "hbars", role: "list", "aria-label": "Items counted per person" });
+    var max = counters[names[0]] || 1;
+    var wrap = el("div", { class: "hbars", role: "list", "aria-label": label || "Items counted per person" });
     names.forEach(function (n) {
       var v = counters[n];
       var share = total ? Math.round(v / total * 100) : 0;
@@ -966,8 +1094,9 @@
       renderPage();
     });
     hero.appendChild(quickToggle);
+    hero.appendChild(el("div", { id: "areaHolder" }));
 
-    var left = el("div", {}, [hero, el("div", { id: "countCard" })]);
+    var left = el("div", {}, [el("div", { id: "taskHolder" }), hero, el("div", { id: "countCard" })]);
     var recentCard = el("div", { class: "card" }, [el("div", { class: "card-head" }, [el("div", {}, [
       el("h2", { text: "Your recent counts" }), el("div", { class: "card-sub", text: "Click one to change it" })
     ])])]);
@@ -990,8 +1119,62 @@
     }
     root.appendChild(el("div", { class: "grid two" }, [left, recentCard]));
     // An open product card takes focus for its quantity; otherwise ready the scanner box
+    renderCountExtras();
     if (quickOn()) renderQuickCard();
-    if (state.currentScan) renderCountCard(); else input.focus();
+    if (state.currentScan) renderCountCard(); else if (needsArea()) $("#areaSelect").focus(); else input.focus();
+  }
+
+  // Task cards and the area picker on the Count page; redrawn live without
+  // touching the scanner box
+  function renderCountExtras() {
+    var tasks = $("#taskHolder"), holder = $("#areaHolder");
+    if (!tasks || !holder) return;
+    tasks.innerHTML = "";
+    tasks.appendChild(taskCards());
+    if (document.activeElement && document.activeElement.id === "areaSelect") return;
+    holder.innerHTML = "";
+    if (!state.areas.length) return;
+    var areaSel = el("select", { id: "areaSelect", "aria-label": "Area" }, [el("option", { value: "", text: "Pick where you're counting\u2026" })]
+      .concat(state.areas.map(function (a) { return el("option", { value: a.id, text: a.name }); }))
+      .concat([el("option", { value: "none", text: "No specific area" })]));
+    var ch = areaChoice();
+    areaSel.value = ch === "none" || currentArea() ? ch : "";
+    areaSel.addEventListener("change", function () {
+      chooseArea(areaSel.value);
+      areaSel.blur();
+      renderCountExtras();
+      var i = $("#countInput"); if (i && !needsArea()) i.focus();
+    });
+    holder.appendChild(el("label", { class: "area-row" + (needsArea() ? " need" : "") }, [
+      el("span", { html: ICONS.areas }), el("span", { text: "Counting in" }), areaSel
+    ]));
+  }
+
+  // This person's open tasks, above the scanner box
+  function taskCards() {
+    var wrap = el("div", {});
+    myTasks().forEach(function (t) {
+      var pr = taskProgress(t);
+      var card = el("div", { class: "card task-card" }, [
+        el("div", { class: "task-info" }, [
+          el("div", { class: "task-title", text: "Your task" }),
+          el("div", { class: "task-what", text: [t.areaName ? "Count " + t.areaName : "", pr.total ? pr.done + " of " + pr.total + " items counted" : SC.plural(pr.done, "item") + " counted so far"].filter(Boolean).join(" \u00b7 ") }),
+          t.note ? el("div", { class: "task-note", text: t.note }) : null
+        ]),
+        pr.total ? el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "See items", onclick: function () { state.items.filter = "pending"; go("items"); } }) : null,
+        el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "Mark done", onclick: function () {
+          if (pr.total && pr.done < pr.total && !window.confirm(pr.done + " of " + pr.total + " items are counted. Mark the task as done anyway?")) return;
+          SC.setTaskDone(t, true).then(function () { toast("Task marked as done"); }, function (e) { toast("Couldn't save: " + SC.friendlyError(e)); });
+        } })
+      ]);
+      if (pr.total) card.appendChild(el("div", { class: "meter task-meter" }, [el("div", { style: "width:" + Math.round(pr.done / pr.total * 100) + "%" })]));
+      wrap.appendChild(card);
+    });
+    return wrap;
+  }
+  function warnOutsideTask(id) {
+    var set = myTaskItems();
+    if (Object.keys(set).length && !set[id]) toast("Not in your task \u2014 counted anyway");
   }
 
   // openCard: open the item's card even in Quick count (clicked from a list, not scanned)
@@ -1002,6 +1185,12 @@
     var input = $("#countInput");
     if (input) input.value = "";
     if (!state.catalog && state.catalogLoading) { toast("The product list is still loading \u2014 try again in a moment"); return; }
+    if (needsArea()) {
+      toast("Pick the area you're counting first");
+      if (state.page !== "count") go("count");
+      var sel = $("#areaSelect"); if (sel) sel.focus();
+      return;
+    }
     if (quickOn() && !openCard) { if (state.page !== "count") go("count"); quickAdd(code); return; }
     // The whole list and every count are already loaded: no lookups needed
     var product = state.products[id], extra = state.extras[id];
@@ -1101,7 +1290,7 @@
     SC.countParts(c).forEach(function (x, i) {
       box.appendChild(el("div", { class: "part-line" }, [
         el("span", { class: "mono part-qty", text: (i ? "+ " : "") + x.qty }),
-        el("span", { text: (x.by || "someone") + (x.at ? " \u00b7 " + fmtWhen(x.at) : "") })
+        el("span", { text: (x.by || "someone") + (x.areaName ? " \u00b7 " + x.areaName : "") + (x.at ? " \u00b7 " + fmtWhen(x.at) : "") })
       ]));
     });
     return box;
@@ -1116,13 +1305,13 @@
     savingIds[id] = true;
     var item = { id: id, barcode: p.barcode || id, description: p.description || "" }, before = state.counts[id] || null;
     try {
+      warnOutsideTask(id);
       if (mode === "add" && before) {
-        await SC.addToCount(item, qty, null, before);
+        var res = await SC.addToCount(item, qty, null, before);
         SC.log("count_added", { barcode: item.barcode, description: item.description, qty: qty, total: before.qty + qty });
-        toast("Added " + qty + " \u2014 total " + (before.qty + qty));
+        savedToast(res, "Added " + qty + " \u2014 total " + (before.qty + qty));
       } else {
-        await SC.saveCount(item, qty, before);
-        toast("Saved: " + qty);
+        savedToast(await SC.saveCount(item, qty, before), "Saved: " + qty);
       }
       state.currentScan = null;
       if (state.page === "count") renderPage();
@@ -1160,8 +1349,14 @@
       if (!window.confirm("Ask for a recount of " + SC.plural(ids.length, "item") + "? Someone other than the first counter will count each one again without seeing the first number.")) return;
       askRecount(ids);
     } }));
+    if (isAdmin() && state.items.filter !== "extras") bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", id: "assignShown", text: "Assign these to\u2026", onclick: function () {
+      var ids = productRowsShown();
+      if (!ids.length) { toast("No items to assign"); return; }
+      assignModal(ids);
+    } }));
     if (isAdmin()) bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", html: ICONS.download + " Export", onclick: exportResults }));
     root.appendChild(bar);
+    if (taskLimited()) root.appendChild(el("div", { class: "banner", text: "Showing the " + SC.plural(Object.keys(myTaskItems()).length, "item") + " in your task." }));
     root.appendChild(el("div", { class: "card table-card" }, [el("div", { class: "table-scroll", id: "itemsScroll" }), el("div", { class: "table-foot", id: "itemsFoot" })]));
     renderItemsTable();
   }
@@ -1186,11 +1381,8 @@
       table.appendChild(tb);
     } else {
       table.appendChild(el("thead", {}, [el("tr", {}, ["Barcode", "Description", "Status", "Counted", "Counted by", "Last updated"].map(function (h, i) { return el("th", { class: i === 3 ? "r" : "", text: h }); }))]));
-      rows = Object.keys(state.products).map(function (id) { return Object.assign({ id: id }, state.products[id]); }).filter(function (p) {
-        if (state.items.filter === "pending" && isCounted(p)) return false;
-        if (state.items.filter === "counted" && !isCounted(p)) return false;
-        return match(p);
-      });
+      var ids = productRowsShown();
+      rows = ids.map(function (id) { return Object.assign({ id: id }, state.products[id]); });
       var tbody = el("tbody");
       rows.slice(0, state.items.limit).forEach(function (p) {
         var c = isCounted(p), rec = state.recounts[p.id];
@@ -1229,6 +1421,20 @@
       st.counted.toLocaleString() + " of " + st.total.toLocaleString() + " counted \u00b7 " + SC.plural(st.extras, "extra item");
   }
 
+  // Barcode IDs of the rows the Items page shows (filter + search; staff with an
+  // item task see only its items)
+  function productRowsShown() {
+    var q = state.items.search.trim().toLowerCase(), f = state.items.filter;
+    var only = taskLimited() ? myTaskItems() : null;
+    return Object.keys(state.products).filter(function (id) {
+      var p = state.products[id];
+      if (only && !only[id]) return false;
+      if (f === "pending" && isCounted(p)) return false;
+      if (f === "counted" && !isCounted(p)) return false;
+      return !q || String(p.barcode || "").toLowerCase().indexOf(q) !== -1 || String(p.description || "").toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
   // Barcode IDs of the counted items matching the current search (Items page)
   function countedRowsShown() {
     var q = state.items.search.trim().toLowerCase();
@@ -1260,6 +1466,7 @@
     }
     var e = quick.items[id];
     if (e && e.listId !== state.catalog.listId) e = null; // a new stock check started
+    if (!e) warnOutsideTask(id);
     if (!e) e = quick.items[id] = { id: id, listId: state.catalog.listId, item: { id: id, barcode: p.barcode, description: p.description || "" }, partId: SC.newPartId(), added: 0, unlogged: 0, written: false };
     quick.last = e;
     var before = e.written ? { parts: true } : (state.counts[id] || null);
@@ -1451,11 +1658,18 @@
     input.addEventListener("blur", function () { finish(true); });
   }
 
+  // "Aisle 3, Warehouse": where the item's parts were counted
+  function countAreas(c) {
+    var names = [];
+    SC.countParts(c).forEach(function (p) { if (p.areaName && names.indexOf(p.areaName) === -1) names.push(p.areaName); });
+    return names.join(", ");
+  }
+
   function exportResults() {
-    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Counted By", "Counted At", "Count Parts"]];
+    var aoa = [["Barcode", "Description", "Counted Qty", "Status", "Counted By", "Counted At", "Count Parts", "Areas"]];
     Object.keys(state.products).forEach(function (id) {
       var p = state.products[id], c = isCounted(p);
-      aoa.push([p.barcode || id, p.description || "", c ? p.countedQty : "", c ? "Counted" : "Not counted", c ? p.updatedBy || "" : "", c ? fmtWhen(p.updatedAt) : "", SC.partsText(state.counts[id])]);
+      aoa.push([p.barcode || id, p.description || "", c ? p.countedQty : "", c ? "Counted" : "Not counted", c ? p.updatedBy || "" : "", c ? fmtWhen(p.updatedAt) : "", SC.partsText(state.counts[id]), countAreas(state.counts[id])]);
     });
     var extraIds = Object.keys(state.extras);
     if (extraIds.length) {
@@ -1468,6 +1682,141 @@
     download(fname, aoa, "Stock check");
     SC.log("export", { detail: fname });
     toast("Exported");
+  }
+
+  /* ---------------- areas & tasks (admins) ---------------- */
+  function staffOptions() {
+    return state.users.filter(function (u) { return u.active && !u.replacedBy; })
+      .sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })
+      .map(function (u) { return [u.uid, u.name + " (@" + u.username + ")"]; });
+  }
+  function areaOptions() { return [["", "Any area"]].concat(state.areas.map(function (a) { return [a.id, a.name]; })); }
+
+  // ids: the items to count, or [] for an area-only task; areaId: preselected area
+  function assignModal(ids, areaId) {
+    var people = staffOptions();
+    if (!people.length) { toast(state.loaded.users ? "Add a staff member first" : "Loading staff\u2026"); return; }
+    if (ids.length > SC.MAX_TASK_ITEMS) { toast("Narrow it down to " + SC.MAX_TASK_ITEMS.toLocaleString() + " items or fewer (search first)"); return; }
+    var fields = [{ name: "uid", label: "Staff member", type: "select", options: people }];
+    if (state.areas.length || !ids.length) fields.push({ name: "areaId", label: "Area", type: "select", options: areaOptions(), value: areaId || "" });
+    fields.push({ name: "note", label: "Note (optional)", optional: true, placeholder: "e.g. top shelves first" });
+    formModal({
+      title: ids.length ? "Assign " + SC.plural(ids.length, "item") : "New task",
+      text: ids.length
+        ? "They'll see these items as their task, and only these items in their list."
+        : "Give someone an area to count. They'll see it as their task and their counts are recorded in that area.",
+      fields: fields,
+      submitLabel: "Assign",
+      onSubmit: async function (v) {
+        var u = state.users.filter(function (x) { return x.uid === v.uid; })[0];
+        if (!u) throw new Error("Pick a staff member.");
+        if (!ids.length && !v.areaId) throw new Error(state.areas.length ? "Pick the area to count." : "Add an area first.");
+        await SC.createTask({ uid: u.uid, name: u.name, username: u.username, areaId: v.areaId || "", areaName: areaName(v.areaId), items: ids, note: v.note });
+        toast("Assigned to " + u.name);
+      }
+    });
+  }
+
+  // The add box stays put (and keeps focus) while the tables below redraw
+  function renderAreas(root) {
+    var nameIn = el("input", { class: "input grow", placeholder: "New area, e.g. Aisle 3 or Warehouse", id: "newArea" });
+    var addForm = el("form", { class: "toolbar" }, [nameIn, el("button", { class: "btn btn-primary", type: "submit", html: ICONS.plus + " Add area" })]);
+    addForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var n = nameIn.value.trim();
+      if (!n) return;
+      if (state.areas.some(function (a) { return a.name.toLowerCase() === n.toLowerCase(); })) { toast(n + " already exists"); return; }
+      run(function () { return SC.saveArea(n); }, "Added " + n);
+      nameIn.value = "";
+    });
+    root.appendChild(addForm);
+    root.appendChild(el("div", { id: "areasBody" }));
+    renderAreasBody();
+  }
+  function renderAreasBody() {
+    var root = $("#areasBody");
+    if (!root) return;
+    root.innerHTML = "";
+    var st = areaStats();
+    // Areas and progress in each
+    var areaCard = el("div", { class: "card" }, [el("div", { class: "card-head" }, [
+      el("div", {}, [el("h2", { text: "Areas" }), el("div", { class: "card-sub", text: "Staff pick one before counting. Every count records it." })])
+    ])]);
+    var rowsData = state.areas.map(function (a) { return { id: a.id, name: a.name, s: st[a.id] }; });
+    if (st[""]) rowsData.push({ id: "", name: "No area", s: st[""] });
+    if (!rowsData.length) areaCard.appendChild(el("div", { class: "empty", text: "No areas yet. Without areas, staff count without picking one." }));
+    else {
+      var total = Object.keys(state.counts).length;
+      var table = el("table", { class: "data" });
+      table.appendChild(el("thead", {}, [el("tr", {}, ["Area", "Items counted", "Units", "Counted by", "Staff on it", ""].map(function (h, i) { return el("th", { class: i === 1 || i === 2 ? "r" : "", text: h }); }))]));
+      var tb = el("tbody");
+      rowsData.forEach(function (r) {
+        var s = r.s || { items: 0, units: 0, people: {} };
+        var assigned = state.tasks.filter(function (t) { return !t.done && t.areaId && t.areaId === r.id; }).map(function (t) { return t.name; });
+        var actions = el("div", { class: "row-actions" });
+        if (r.id) {
+          actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Assign", onclick: function () { assignModal([], r.id); } }));
+          actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Rename", onclick: function () {
+            formModal({ title: "Rename area", fields: [{ name: "name", label: "Name", value: r.name }], submitLabel: "Rename",
+              onSubmit: async function (v) { await SC.saveArea(v.name, r.id); toast("Renamed"); } });
+          } }));
+          actions.appendChild(el("button", { class: "btn btn-danger btn-sm", type: "button", text: "Delete", onclick: function () {
+            if (!window.confirm("Delete the area " + r.name + "? Counts already saved keep its name.")) return;
+            run(function () { return SC.deleteArea(r.id, r.name); }, "Deleted " + r.name);
+          } }));
+        }
+        var share = total ? Math.round(s.items / total * 100) : 0;
+        tb.appendChild(el("tr", {}, [
+          el("td", {}, [el("b", { text: r.name })]),
+          el("td", { class: "r num" }, [String(s.items), el("div", { class: "meter area-meter", title: share + "% of counted items" }, [el("div", { style: "width:" + share + "%" })])]),
+          el("td", { class: "r num", text: String(s.units) }),
+          el("td", { class: "dim", text: Object.keys(s.people).join(", ") }),
+          el("td", { class: "dim", text: assigned.join(", ") }),
+          el("td", {}, [actions])
+        ]));
+      });
+      table.appendChild(tb);
+      areaCard.appendChild(el("div", { class: "table-scroll" }, [table]));
+    }
+    root.appendChild(areaCard);
+
+    // Tasks
+    var taskCard = el("div", { class: "card", style: "margin-top:16px" }, [el("div", { class: "card-head" }, [
+      el("div", {}, [el("h2", { text: "Tasks" }), el("div", { class: "card-sub", text: "Assign an area, or pick items under Items and use \u201cAssign these to\u2026\u201d" })]),
+      el("button", { class: "btn btn-primary btn-sm", type: "button", html: ICONS.plus + " New task", onclick: function () { assignModal([]); } })
+    ])]);
+    if (!state.tasks.length) taskCard.appendChild(el("div", { class: "empty", text: "No tasks yet." }));
+    else {
+      var tt = el("table", { class: "data" });
+      tt.appendChild(el("thead", {}, [el("tr", {}, ["Staff", "Work", "Progress", "Status", "Assigned", ""].map(function (h) { return el("th", { text: h }); }))]));
+      var tbody = el("tbody");
+      state.tasks.slice().sort(function (a, b) { return (a.done - b.done) || String(b.createdAt).localeCompare(String(a.createdAt)); }).forEach(function (t) {
+        var pr = taskProgress(t);
+        var prog = pr.total
+          ? el("div", {}, [pr.done + " / " + pr.total, el("div", { class: "meter area-meter" }, [el("div", { style: "width:" + Math.round(pr.done / pr.total * 100) + "%" })])])
+          : el("span", { text: SC.plural(pr.done, "item") + " counted there" });
+        var actions = el("div", { class: "row-actions" }, [
+          el("button", { class: "btn btn-secondary btn-sm", type: "button", text: t.done ? "Reopen" : "Mark done", onclick: function () {
+            run(function () { return SC.setTaskDone(t, !t.done); }, t.done ? "Task reopened" : "Task marked as done");
+          } }),
+          el("button", { class: "btn btn-danger btn-sm", type: "button", text: "Delete", onclick: function () {
+            if (!window.confirm("Delete " + t.name + "'s task? Their counts are kept.")) return;
+            run(function () { return SC.deleteTask(t.id); }, "Task deleted");
+          } })
+        ]);
+        tbody.appendChild(el("tr", {}, [
+          el("td", {}, [el("b", { text: t.name || "" })]),
+          el("td", {}, [taskWhat(t), t.note ? el("div", { class: "dim", style: "font-size:12px", text: t.note }) : null]),
+          el("td", {}, [prog]),
+          el("td", {}, [el("span", { class: "pill " + (t.done ? "good" : "accent"), text: t.done ? "Done" : "Open" })]),
+          el("td", { class: "dim", text: fmtWhen(t.createdAt) + (t.createdBy ? " by " + t.createdBy : "") }),
+          el("td", {}, [actions])
+        ]));
+      });
+      tt.appendChild(tbody);
+      taskCard.appendChild(el("div", { class: "table-scroll" }, [tt]));
+    }
+    root.appendChild(taskCard);
   }
 
   /* ---------------- activity log ---------------- */
@@ -1818,7 +2167,8 @@
     (opts.fields || []).forEach(function (f) {
       var input = f.type === "select"
         ? el("select", {}, f.options.map(function (o) { return el("option", { value: o[0], text: o[1] }); }))
-        : el("input", { type: f.type || "text", autocomplete: f.autocomplete || "off", required: "required", value: f.value, spellcheck: "false", autocapitalize: "none" });
+        : el("input", { type: f.type || "text", autocomplete: f.autocomplete || "off", required: f.optional ? null : "required", value: f.value, spellcheck: "false", autocapitalize: "none", placeholder: f.placeholder });
+      if (f.type === "select" && f.value !== undefined) input.value = f.value;
       inputs[f.name] = input;
       form.appendChild(el("label", { class: "field" }, [el("span", { text: f.label }), input, f.help ? el("small", { class: "help", text: f.help }) : null]));
     });
@@ -1907,6 +2257,8 @@
       return;
     }
     state.db = fb.db;
+    SC.onSync(onSyncChange);
+    SC.onWriteError(function (e) { toast("A count saved offline couldn't be uploaded: " + SC.friendlyError(e)); });
     var authHeard = false;
     SC.onAuth(function (profile, error) { authHeard = true; onAuthChanged(profile, error); },
       // Signed in from last time: wait for it rather than showing the sign-in screen
