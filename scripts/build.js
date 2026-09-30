@@ -1,7 +1,7 @@
 // Bundles the web pages for the apps, swapping the CDN <script> tags for local
 // copies from node_modules so they start without a network.
 //
-//   node scripts/build.js            -> www/ for the iOS app (index.html + Capacitor)
+//   node scripts/build.js            -> www/ for the iOS and Android apps (index.html + Capacitor)
 //   node scripts/build.js --desktop  -> desktop/app/ for the Windows and Mac app
 //                                       (dashboard.html + index.html, no Capacitor)
 const fs = require("fs");
@@ -46,8 +46,9 @@ for (const page of pages) {
   fs.writeFileSync(path.join(out, page), html);
 }
 
-// Shared sign-in / Firebase code, and the logo shown on the dashboard
+// Shared sign-in / Firebase code, the logo shown on the dashboard and the app icon
 fs.copyFileSync(path.join(root, "common.js"), path.join(out, "common.js"));
 fs.copyFileSync(path.join(root, "logo.png"), path.join(out, "logo.png"));
+fs.copyFileSync(path.join(root, "app-icon.png"), path.join(out, "app-icon.png"));
 
 console.log("Built " + path.relative(root, out) + "/ (" + pages.join(", ") + ")");

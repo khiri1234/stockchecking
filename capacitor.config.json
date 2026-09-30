@@ -12,5 +12,8 @@
       "resize": "native",
       "resizeOnFullScreen": true
     }
+  },
+  "android": {
+    "backgroundColor": "#EDEFF2"
   }
 }

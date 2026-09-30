@@ -5,7 +5,7 @@ or a computer, and every device sees the counts live. Staff sign in with a
 username and password; admins get a desktop dashboard with progress charts,
 staff management and an activity log.
 
-- `index.html`: the phone app (also the iOS app). Computers are sent to the
+- `index.html`: the phone app (also the iOS and Android apps). Computers are sent to the
   dashboard automatically; add `?mobile` to the URL to stay on the phone view.
 - `dashboard.html`: desktop dashboard: Overview, Count, Items, Recounts,
   Areas & tasks, Activity log, Staff and Stock check.
@@ -162,10 +162,48 @@ team, then **Product > Archive** and **Distribute App > App Store Connect**.
 After any change to `index.html`, run `npm run ios` again before archiving.
 
 - Bundle ID: `com.khiri1234.stockcheck` (in `capacitor.config.json` and Xcode)
-- App icon: `resources/icon.png`, regenerated with `scripts/make-icon.js`
+- App icon: see **App icon** below
 - Privacy policy for the App Store listing: `privacy.html`
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its username and password in App Store Connect > App Review Information
+
+## Android app
+
+The `android/` folder is the same Capacitor app for Android phones (Android
+7 or later): the camera button opens the native barcode scanner, Export opens
+the Android share sheet, Quick count vibrates, and the phone's Back button
+closes whatever is open, then returns to Scan, then leaves the app.
+
+Every change to the app runs the **Android app** workflow (Actions tab). Open
+the latest run and download **The-H-Stock-Management-Android** from
+*Artifacts*: it contains `The-H-Stock-Management-1.<run>.apk`.
+
+- **Install on a phone:** send the `.apk` to the phone (email, WhatsApp,
+  Google Drive...) and open it. Android asks to allow installing from that
+  app once (**Settings > Allow from this source**). A newer APK installs over
+  the old one and keeps the sign-in.
+- **The APK's signing key** is `android/app/sideload.keystore`, kept in the
+  repository on purpose so every build can update the last one. It isn't
+  secret, so it's only for installing directly; Google Play uses its own key.
+- **Google Play:** create an upload key once on a computer with Java:
+  `keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload`,
+  then add repository secrets `ANDROID_KEYSTORE` (`base64 -i upload.jks`),
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`upload`) and
+  `ANDROID_KEY_PASSWORD`. Each run then also produces
+  **The-H-Stock-Management-Android-Play** with the `.aab` to upload in the
+  Play Console. Keep `upload.jks` and its password safe.
+- **Build on a computer** with Android Studio: `npm install`, then
+  `npm run android` (builds `www/`, syncs it into `android/`, opens Android
+  Studio).
+- Package name: `com.khiri1234.stockcheck`. The version is `1.<run number>`.
+
+## App icon
+
+`resources/icon-source.jpg` is the artwork. `scripts/make-icons.js` builds
+every icon from it: the iPhone and Android app icons, the Windows and Mac
+app icons, and `app-icon.png` (browser tab, home screen and the logo at the
+top of the apps). After changing the artwork:
+`NODE_PATH=$(npm root -g) node scripts/make-icons.js`.
 
 ## Desktop apps (Windows and macOS)
 
