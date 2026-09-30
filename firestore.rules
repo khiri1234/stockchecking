@@ -64,6 +64,22 @@ service cloud.firestore {
           && request.resource.data.recountQty is int && request.resource.data.recountQty >= 0);
     }
 
+    // Places counted separately ("Aisle 3", "Warehouse"); kept between stock checks
+    match /areas/{id} {
+      allow read: if isActive();
+      allow write: if isAdmin();
+    }
+
+    // Work assigned to one person. They can read their own tasks and mark
+    // them done; admins manage all of them.
+    match /tasks/{id} {
+      allow read: if isAdmin() || (isActive() && resource.data.uid == request.auth.uid);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isActive() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done', 'doneAt']));
+    }
+
     // Running total of counted items: staff can only add one at a time
     match /meta/stats {
       allow read: if isActive();
