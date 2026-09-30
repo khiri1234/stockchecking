@@ -1757,6 +1757,23 @@
         var s = r.s || { items: 0, units: 0, people: {} };
         var assigned = state.tasks.filter(function (t) { return !t.done && t.areaId && t.areaId === r.id; }).map(function (t) { return t.name; });
         var actions = el("div", { class: "row-actions" });
+        if (!r.id && state.areas.length) {
+          // Counts saved without an area (before areas existed, or "No specific area")
+          actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Merge into\u2026", onclick: function () {
+            formModal({
+              title: "Merge \u201cNo area\u201d into an area",
+              text: "The " + SC.plural(s.items, "item") + " counted without an area (" + s.units + " units) will count as counted in the area you pick. The counts themselves don't change.",
+              fields: [{ name: "areaId", label: "Area", type: "select", options: state.areas.map(function (a) { return [a.id, a.name]; }) }],
+              submitLabel: "Merge",
+              onSubmit: async function (v) {
+                var a = state.areas.filter(function (x) { return x.id === v.areaId; })[0];
+                if (!a) throw new Error("Pick an area.");
+                var n = await SC.moveToArea(state.counts, "", { id: a.id, name: a.name });
+                toast(SC.plural(n, "item") + " moved to " + a.name);
+              }
+            });
+          } }));
+        }
         if (r.id) {
           actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Assign", onclick: function () { assignModal([], r.id); } }));
           actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Rename", onclick: function () {

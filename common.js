@@ -169,6 +169,7 @@
     area_added: "Added area",
     area_renamed: "Renamed area",
     area_deleted: "Deleted area",
+    area_merged: "Moved counts to an area",
     task_assigned: "Assigned a task",
     task_done: "Finished a task"
   };
@@ -562,6 +563,35 @@
     log("area_deleted", { detail: name || "" });
   }
 
+  // Admins: records every part counted in fromAreaId ("" = no area) as
+  // counted in area { id, name }. counts: id -> count doc. Returns how many
+  // items changed. Counts saved before parts existed get one part, "all".
+  async function moveToArea(counts, fromAreaId, area, fromName) {
+    var ids = [], FP = firebase.firestore.FieldPath;
+    Object.keys(counts).forEach(function (id) {
+      if (countParts(counts[id]).some(function (p) { return (p.area || "") === fromAreaId; })) ids.push(id);
+    });
+    for (var i = 0; i < ids.length; i += 400) {
+      var batch = db.batch();
+      ids.slice(i, i + 400).forEach(function (id) {
+        var c = counts[id], ref = db.doc("counts/" + id);
+        if (!c.parts || typeof c.parts !== "object") {
+          batch.update(ref, { parts: { all: { qty: c.qty, by: c.by || "", byUid: c.byUid || "", at: c.at || "", area: area.id, areaName: area.name } } });
+          return;
+        }
+        var args = [];
+        Object.keys(c.parts).forEach(function (pid) {
+          if ((c.parts[pid].area || "") !== fromAreaId) return;
+          args.push(new FP("parts", pid, "area"), area.id, new FP("parts", pid, "areaName"), area.name);
+        });
+        batch.update.apply(batch, [ref].concat(args));
+      });
+      await batch.commit();
+    }
+    log("area_merged", { detail: (fromName || "No area") + " \u2192 " + area.name + " \u00b7 " + plural(ids.length, "item") });
+    return ids.length;
+  }
+
   var MAX_TASK_ITEMS = 20000; // keeps a task document well under Firestore's 1 MiB
   // t: { uid, name, areaId, areaName, items: [barcodeId] or null, note }
   async function createTask(t) {
@@ -882,6 +912,7 @@
     setArea: setArea,
     saveArea: saveArea,
     deleteArea: deleteArea,
+    moveToArea: moveToArea,
     createTask: createTask,
     deleteTask: deleteTask,
     setTaskDone: setTaskDone,
