@@ -43,6 +43,13 @@
     --radius-sm: 8px;
     --shadow: 0 1px 2px rgba(15,17,20,0.05), 0 10px 28px -14px rgba(15,17,20,0.22);
     --shadow-lg: 0 2px 4px rgba(15,17,20,0.06), 0 20px 44px -18px rgba(15,17,20,0.3);
+    /* Chart colours: categorical series in fixed order (identity: a person,
+       an area), checked for colour-blind separation on the white cards.
+       Status colours are separate and always come with a label. */
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+    --s-other: #b4b9c1;
+    --st-good: #0ca30c; --st-warning: #fab219; --st-none: #dfe2e7;
     color-scheme: light;
   }
   * { box-sizing: border-box; }
@@ -120,10 +127,13 @@
   .chart .gridline { stroke: var(--grid); stroke-width: 1; }
   .chart .baseline { stroke: var(--border); stroke-width: 1; }
   .chart .bar { fill: var(--accent); pointer-events: none; }
+  .chart .seg { pointer-events: none; }
+  .chart .seg.hover { filter: brightness(.88); }
   .chart .hit { fill: transparent; cursor: default; }
   .chart .hit:hover + .bar, .chart .bar.hover { fill: var(--accent-2); }
   .tooltip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; padding: 7px 10px; border-radius: 8px; white-space: nowrap; box-shadow: var(--shadow-lg); transform: translate(-50%, calc(-100% - 10px)); z-index: 5; }
   .tooltip b { font-weight: 700; }
+  .tooltip .tip-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
   .empty { color: var(--ink-dim); font-size: 13px; text-align: center; padding: 34px 10px; }
 
   .hbars { display: flex; flex-direction: column; gap: 12px; }
@@ -132,7 +142,23 @@
   .hbar .val { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .hbar .track { grid-column: 1 / -1; height: 10px; }
   .hbar .fill { height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); min-width: 3px; }
-  .hbar:hover .fill { background: var(--accent-2); }
+  .hbar:hover .fill { filter: brightness(.88); }
+  .hbar .name { display: flex; align-items: center; gap: 7px; }
+  .hbar .name span { overflow: hidden; text-overflow: ellipsis; }
+  .swatch { flex: none; width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-dim); margin: 0 0 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend b { color: var(--ink); font-weight: 700; }
+  /* Summary tiles: a coloured icon names each one; numbers stay in ink */
+  .tile { position: relative; }
+  .tile .chip { position: absolute; top: 16px; right: 16px; width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+  .tile .chip svg { width: 18px; height: 18px; }
+  .statusbar { display: flex; gap: 2px; height: 10px; margin-top: 12px; border-radius: 5px; overflow: hidden; background: var(--st-none); }
+  .statusbar > div { height: 100%; }
+  .statusbar .seg-good { background: var(--st-good); }
+  .statusbar .seg-warn { background: var(--st-warning); }
+  .statusbar .seg-none { background: var(--st-none); flex: 1; }
+  .tile .legend { margin: 8px 0 0; }
 
   /* ---------- lists & tables ---------- */
   .feed { display: flex; flex-direction: column; }
@@ -850,15 +876,44 @@
   }
 
   /* ---------------- overview ---------------- */
-  function tile(label, value, foot, meterPct) {
+  // color/icon: the coloured chip that names the tile; extra: an element under the value
+  function tile(label, value, foot, color, icon, extra) {
     var t = el("div", { class: "card tile" }, [el("div", { class: "label", text: label })]);
+    if (color) t.appendChild(el("div", { class: "chip", style: "background:color-mix(in srgb, " + color + " 14%, transparent);color:" + color, html: icon || "" }));
     var v = el("div", { class: "value" });
     if (typeof value === "string") v.textContent = value; else v.appendChild(value);
     t.appendChild(v);
-    if (meterPct !== undefined) t.appendChild(el("div", { class: "meter", role: "progressbar", "aria-valuenow": String(meterPct), "aria-valuemin": "0", "aria-valuemax": "100" }, [el("div", { style: "width:" + meterPct + "%" })]));
+    if (extra) t.appendChild(extra);
     if (foot) t.appendChild(el("div", { class: "foot", text: foot }));
     return t;
   }
+
+  /* ---------------- chart colours ----------------
+   * Series colours follow the person or area, never their rank: people in
+   * alphabetical order, areas in their own order. Only 8 colours exist; past
+   * that everyone else shares grey ("Other"), never a made-up colour. */
+  var SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"].map(function (v) { return "var(" + v + ")"; });
+  var OTHER = "var(--s-other)";
+  function peopleOrder() {
+    var seen = {};
+    Object.keys(state.counts).forEach(function (id) { var c = state.counts[id]; seen[c.by || "Unknown"] = true; });
+    return Object.keys(seen).sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function personColor(name, order) {
+    var i = (order || peopleOrder()).indexOf(name);
+    return i >= 0 && i < SERIES.length - 1 ? SERIES[i] : OTHER; // 7 people + Other
+  }
+  function areaColor(id) {
+    if (!id) return OTHER;
+    var i = state.areas.map(function (a) { return a.id; }).indexOf(id);
+    return i >= 0 && i < SERIES.length ? SERIES[i] : OTHER;
+  }
+  var TILE_ICONS = {
+    progress: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M12 7v5l3 2"/></svg>',
+    counted: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    todo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>',
+    extra: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+  };
 
   function renderOverview(root) {
     var st = stats();
@@ -869,17 +924,30 @@
     });
     var countedFrac = el("span", {}, [String(st.counted), el("small", { text: "/ " + st.total })]);
 
+    // Where every item on the list stands: counted, waiting for a recount, not counted
+    var recount = Object.keys(state.recounts).filter(function (id) { return state.recounts[id].status === "open" && isCounted(state.products[id]); }).length;
+    var done = st.counted - recount, pct = function (n) { return st.total ? n / st.total * 100 : 0; };
+    var bar = el("div", { class: "statusbar", role: "img", "aria-label": done + " counted, " + recount + " waiting for a recount, " + st.remaining + " not counted" }, [
+      done ? el("div", { class: "seg-good", style: "width:" + pct(done) + "%", title: done + " counted" }) : null,
+      recount ? el("div", { class: "seg-warn", style: "width:" + pct(recount) + "%", title: recount + " waiting for a recount" }) : null,
+      el("div", { class: "seg-none", title: st.remaining + " not counted" })
+    ]);
+    var legend = el("div", { class: "legend" }, [
+      el("span", {}, [el("i", { class: "swatch", style: "background:var(--st-good)" }), el("b", { text: String(done) }), "counted"]),
+      recount ? el("span", {}, [el("i", { class: "swatch", style: "background:var(--st-warning)" }), el("b", { text: String(recount) }), "recount"]) : null,
+      el("span", {}, [el("i", { class: "swatch", style: "background:var(--st-none);box-shadow:inset 0 0 0 1px var(--border)" }), el("b", { text: String(st.remaining) }), "to count"])
+    ]);
     root.appendChild(el("div", { class: "grid kpis" }, [
-      tile("Progress", st.pct + "%", st.counted + " of " + st.total + " items counted", st.pct),
-      tile("Counted", countedFrac, st.total ? "items on the list" : "No list loaded"),
-      tile("Still to count", String(st.remaining), st.remaining ? "items not counted yet" : (st.total ? "Everything is counted" : "")),
-      tile("Extra items found", String(st.extras), "scanned but not on the list")
+      tile("Progress", st.pct + "%", "", "var(--s1)", TILE_ICONS.progress, el("div", {}, [bar, legend])),
+      tile("Counted", countedFrac, st.total ? "items on the list" : "No list loaded", "var(--st-good)", TILE_ICONS.counted),
+      tile("Still to count", String(st.remaining), st.remaining ? "items not counted yet" : (st.total ? "Everything is counted" : ""), "var(--s2)", TILE_ICONS.todo),
+      tile("Extra items found", String(st.extras), "scanned but not on the list", "var(--s7)", TILE_ICONS.extra)
     ]));
 
     // Counts over time + counted by staff
     var timeCard = el("div", { class: "card" }, [el("div", { class: "card-head" }, [el("div", {}, [
       el("h2", { text: "Items counted over time" }),
-      el("div", { class: "card-sub", text: "When each item was last counted" })
+      el("div", { class: "card-sub", text: "When each item was last counted, by who counted it" })
     ])])]);
     var timeChart = el("div", { class: "chart" });
     timeCard.appendChild(timeChart);
@@ -888,19 +956,21 @@
       el("h2", { text: "Counted by" }),
       el("div", { class: "card-sub", text: "Items each person counted" })
     ])])]);
-    staffCard.appendChild(renderHBars(counters, st.counted));
+    var order = peopleOrder();
+    staffCard.appendChild(renderHBars(counters, st.counted, "Items counted per person", function (n) { return personColor(n, order); }));
     root.appendChild(el("div", { class: "grid two" }, [timeCard, staffCard]));
     requestAnimationFrame(function () { renderTimeChart(timeChart); });
 
     if (state.areas.length) {
       var ast = areaStats(), byArea = {};
-      state.areas.forEach(function (a) { byArea[a.name] = ast[a.id] ? ast[a.id].items : 0; });
-      if (ast[""]) byArea["No area"] = ast[""].items;
+      var areaColors = {};
+      state.areas.forEach(function (a) { byArea[a.name] = ast[a.id] ? ast[a.id].items : 0; areaColors[a.name] = areaColor(a.id); });
+      if (ast[""]) { byArea["No area"] = ast[""].items; areaColors["No area"] = OTHER; }
       var areaCard = el("div", { class: "card", style: "margin-bottom:16px" }, [el("div", { class: "card-head" }, [
         el("div", {}, [el("h2", { text: "By area" }), el("div", { class: "card-sub", text: "Items counted in each area" })]),
         isAdmin() ? el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "Areas & tasks", onclick: function () { go("areas"); } }) : null
       ])]);
-      areaCard.appendChild(renderHBars(byArea, Object.keys(state.counts).length, "Items counted per area"));
+      areaCard.appendChild(renderHBars(byArea, Object.keys(state.counts).length, "Items counted per area", function (n) { return areaColors[n]; }));
       root.appendChild(areaCard);
     }
 
@@ -968,7 +1038,8 @@
   }
 
   // Horizontal bars, one series: items counted per person (sorted high to low)
-  function renderHBars(counters, total, label) {
+  // colorOf(name): the bar's colour (follows the person/area, not its rank)
+  function renderHBars(counters, total, label, colorOf) {
     var names = Object.keys(counters).sort(function (a, b) { return counters[b] - counters[a]; });
     if (!names.length) return el("div", { class: "empty", text: "No counts yet." });
     var max = counters[names[0]] || 1;
@@ -977,22 +1048,24 @@
       var v = counters[n];
       var share = total ? Math.round(v / total * 100) : 0;
       wrap.appendChild(el("div", { class: "hbar", role: "listitem", title: n + ": " + v + " items (" + share + "% of counted)" }, [
-        el("div", { class: "name", text: n }),
+        el("div", { class: "name" }, [colorOf ? el("i", { class: "swatch", style: "background:" + colorOf(n) }) : null, el("span", { text: n })]),
         el("div", { class: "val", text: String(v) }),
-        el("div", { class: "track" }, [el("div", { class: "fill", style: "width:" + Math.max(1, v / max * 100) + "%" })])
+        el("div", { class: "track" }, [el("div", { class: "fill", style: "width:" + Math.max(1, v / max * 100) + "%" + (colorOf ? ";background:" + colorOf(n) : "") })])
       ]));
     });
     return wrap;
   }
 
-  // Column chart, one series: items whose latest count falls in each hour (or day)
+  // Stacked columns: items whose latest count falls in each hour (or day),
+  // split by who counted them (each person keeps their colour)
   function renderTimeChart(holder) {
     holder.innerHTML = "";
-    var times = [];
+    var times = [], marks = [];
+    var order = peopleOrder();
     Object.keys(state.products).forEach(function (id) {
       var p = state.products[id];
       var d = isCounted(p) && toDate(p.updatedAt);
-      if (d) times.push(d.getTime());
+      if (d) { times.push(d.getTime()); marks.push({ t: d.getTime(), who: p.updatedBy || "Unknown" }); }
     });
     if (!times.length) { holder.appendChild(el("div", { class: "empty", text: "Counts will show here as people save them." })); return; }
     var start = Math.min.apply(null, times.concat(state.session && toDate(state.session.startedAt) ? [toDate(state.session.startedAt).getTime()] : []));
@@ -1006,11 +1079,24 @@
     var span = Math.floor((end - first.getTime()) / step) + 1;
     if (span < MIN_BUCKETS) first = new Date(first.getTime() - (MIN_BUCKETS - span) * step);
     var buckets = [];
-    for (var t = first.getTime(); t <= end && buckets.length < 60; t += step) buckets.push({ t: t, n: 0 });
-    times.forEach(function (x) {
-      var i = Math.floor((x - first.getTime()) / step);
-      if (i >= 0 && i < buckets.length) buckets[i].n++;
+    for (var t = first.getTime(); t <= end && buckets.length < 60; t += step) buckets.push({ t: t, n: 0, by: {} });
+    // Series: the first 7 people (alphabetical) keep their own colour, the rest stack as "Other"
+    var series = order.filter(function (n) { return personColor(n, order) !== OTHER; });
+    var hasOther = order.length > series.length;
+    if (hasOther) series.push("Other");
+    var colorOf = function (k) { return k === "Other" ? OTHER : personColor(k, order); };
+    marks.forEach(function (mk) {
+      var i = Math.floor((mk.t - first.getTime()) / step);
+      if (i < 0 || i >= buckets.length) return;
+      var k = series.indexOf(mk.who) >= 0 ? mk.who : "Other";
+      buckets[i].n++;
+      buckets[i].by[k] = (buckets[i].by[k] || 0) + 1;
     });
+    // Legend: everyone with a count, in stacking order
+    var shown = series.filter(function (k) { return buckets.some(function (b) { return b.by[k]; }); });
+    if (shown.length > 1) holder.appendChild(el("div", { class: "legend" }, shown.map(function (k) {
+      return el("span", {}, [el("i", { class: "swatch", style: "background:" + colorOf(k) }), k]);
+    })));
     var maxN = Math.max.apply(null, buckets.map(function (b) { return b.n; }));
     var niceMax = Math.max(4, Math.ceil(maxN / 4) * 4);
 
@@ -1040,11 +1126,24 @@
       var r = Math.min(4, bw / 2, h);
       var hit = s("rect", { class: "hit", x: m.l + i * slot, y: m.t, width: slot, height: ih });
       svg.appendChild(hit);
-      var bar = null;
+      var segs = [];
       if (b.n > 0) {
-        // rounded top, square at the baseline
-        bar = s("path", { class: "bar", d: "M" + x + "," + (m.t + ih) + "V" + (y + r) + "Q" + x + "," + y + " " + (x + r) + "," + y + "H" + (x + bw - r) + "Q" + (x + bw) + "," + y + " " + (x + bw) + "," + (y + r) + "V" + (m.t + ih) + "Z" });
-        svg.appendChild(bar);
+        // One segment per person, bottom up in legend order, 2px gaps between;
+        // the top segment has rounded corners, the bottom one sits square on the baseline
+        var keys = series.filter(function (k) { return b.by[k]; }), cum = 0;
+        keys.forEach(function (k, ki) {
+          var sh = b.by[k] / niceMax * ih, top = m.t + ih - cum - sh, bottom = m.t + ih - cum - (ki ? 2 : 0);
+          cum += sh;
+          if (bottom - top < 0.5) return;
+          var d;
+          if (ki === keys.length - 1) {
+            var rr = Math.min(4, bw / 2, bottom - top);
+            d = "M" + x + "," + bottom + "V" + (top + rr) + "Q" + x + "," + top + " " + (x + rr) + "," + top + "H" + (x + bw - rr) + "Q" + (x + bw) + "," + top + " " + (x + bw) + "," + (top + rr) + "V" + bottom + "Z";
+          } else d = "M" + x + "," + bottom + "V" + top + "H" + (x + bw) + "V" + bottom + "Z";
+          var seg = s("path", { class: "seg", d: d, style: "fill:" + colorOf(k) });
+          svg.appendChild(seg);
+          segs.push(seg);
+        });
       }
       if (i % labelEvery === 0) {
         var d = new Date(b.t);
@@ -1052,19 +1151,22 @@
           daily ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : d.toLocaleTimeString(undefined, { hour: "numeric" })));
       }
       hit.addEventListener("mouseenter", function () {
-        if (bar) bar.classList.add("hover");
+        segs.forEach(function (g) { g.classList.add("hover"); });
         var d0 = new Date(b.t), d1 = new Date(b.t + step);
         var when = daily ? d0.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
           : d0.toLocaleTimeString(undefined, { hour: "numeric" }) + "–" + d1.toLocaleTimeString(undefined, { hour: "numeric" });
         tip.innerHTML = "";
         tip.appendChild(document.createTextNode(when + " · "));
         tip.appendChild(el("b", { text: b.n + (b.n === 1 ? " item" : " items") }));
+        series.filter(function (k) { return b.by[k]; }).forEach(function (k) {
+          tip.appendChild(el("div", { class: "tip-row" }, [el("i", { class: "swatch", style: "background:" + colorOf(k) }), k + " " + b.by[k]]));
+        });
         tip.hidden = false;
         var scale = holder.clientWidth / W;
         tip.style.left = ((x + bw / 2) * scale) + "px";
-        tip.style.top = (Math.min(y, m.t + ih - 4) * scale) + "px";
+        tip.style.top = (svg.offsetTop + Math.min(y, m.t + ih - 4) * scale) + "px";
       });
-      hit.addEventListener("mouseleave", function () { if (bar) bar.classList.remove("hover"); tip.hidden = true; });
+      hit.addEventListener("mouseleave", function () { segs.forEach(function (g) { g.classList.remove("hover"); }); tip.hidden = true; });
     });
     svg.appendChild(s("line", { class: "baseline", x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih }));
     holder.appendChild(svg);
@@ -1789,8 +1891,8 @@
         }
         var share = total ? Math.round(s.items / total * 100) : 0;
         tb.appendChild(el("tr", {}, [
-          el("td", {}, [el("b", { text: r.name })]),
-          el("td", { class: "r num" }, [String(s.items), el("div", { class: "meter area-meter", title: share + "% of counted items" }, [el("div", { style: "width:" + share + "%" })])]),
+          el("td", {}, [el("span", { style: "display:inline-flex;align-items:center;gap:8px" }, [el("i", { class: "swatch", style: "background:" + areaColor(r.id) }), el("b", { text: r.name })])]),
+          el("td", { class: "r num" }, [String(s.items), el("div", { class: "meter area-meter", title: share + "% of counted items" }, [el("div", { style: "width:" + share + "%;background:" + areaColor(r.id) })])]),
           el("td", { class: "r num", text: String(s.units) }),
           el("td", { class: "dim", text: Object.keys(s.people).join(", ") }),
           el("td", { class: "dim", text: assigned.join(", ") }),
@@ -1815,7 +1917,7 @@
       state.tasks.slice().sort(function (a, b) { return (a.done - b.done) || String(b.createdAt).localeCompare(String(a.createdAt)); }).forEach(function (t) {
         var pr = taskProgress(t);
         var prog = pr.total
-          ? el("div", {}, [pr.done + " / " + pr.total, el("div", { class: "meter area-meter" }, [el("div", { style: "width:" + Math.round(pr.done / pr.total * 100) + "%" })])])
+          ? el("div", {}, [pr.done + " / " + pr.total, el("div", { class: "meter area-meter" }, [el("div", { style: "width:" + Math.round(pr.done / pr.total * 100) + "%;background:" + (pr.done >= pr.total ? "var(--st-good)" : "var(--s1)") })])])
           : el("span", { text: SC.plural(pr.done, "item") + " counted there" });
         var actions = el("div", { class: "row-actions" }, [
           el("button", { class: "btn btn-secondary btn-sm", type: "button", text: t.done ? "Reopen" : "Mark done", onclick: function () {
