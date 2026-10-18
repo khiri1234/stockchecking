@@ -166,6 +166,8 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 - Bundle ID: `com.khiri1234.stockcheck` (in `capacitor.config.json` and Xcode)
 - App icon: see **App icon** below
 - Privacy policy for the App Store listing: `privacy.html`
+- Support URL for the App Store listing: `https://stock.hatef.cc/support.html`
+  (`support.html`); Marketing URL: `https://stock.hatef.cc`
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its username and password in App Store Connect > App Review Information
 
