@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The H Stock Management</title>
+<meta name="description" content="Count your stock together with any phone and watch every count live. Barcode scanning, team counting, offline mode and Excel export for shops and warehouses.">
+<meta property="og:title" content="The H Stock Management">
+<meta property="og:description" content="Count your stock together with any phone and watch every count live.">
+<meta property="og:image" content="https://stock.hatef.cc/site/dash-overview.jpg">
+<link rel="icon" type="image/png" href="app-icon.png">
+<link rel="stylesheet" href="site/site.css">
+<style>
+  .hero { background: radial-gradient(120% 90% at 80% 0%, var(--brand-2), var(--brand) 60%); color: #fff; overflow: hidden; }
+  .hero .inner { max-width: 1080px; margin: 0 auto; padding: 48px 16px 0; display: grid; grid-template-columns: 1.1fr .9fr; gap: 32px; align-items: end; }
+  .hero h1 { font-size: 44px; line-height: 1.1; margin: 0 0 14px; }
+  .hero h1 em { font-style: normal; color: var(--gold); }
+  .hero p.lead { font-size: 19px; color: rgba(255,255,255,.85); margin: 0 0 24px; max-width: 520px; }
+  .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 48px; }
+  .hero .phones { display: flex; gap: 16px; justify-content: center; }
+  .hero .phones img { width: 46%; max-width: 240px; border-radius: 22px 22px 0 0; border: 6px solid #0A1F12; border-bottom: 0; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
+  .hero .phones img + img { margin-top: 40px; }
+
+  section.band { max-width: 1080px; margin: 0 auto; padding: 56px 16px 0; }
+  section.band h2 { font-size: 28px; margin: 0 0 8px; text-align: center; }
+  section.band > p.sub { text-align: center; color: var(--ink-dim); margin: 0 auto 28px; max-width: 600px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .step .n { width: 32px; height: 32px; border-radius: 50%; background: var(--brand); color: var(--gold); display: grid; place-items: center; font-weight: 700; margin-bottom: 10px; }
+  .step h3 { margin: 0 0 4px; font-size: 17px; }
+  .step p { margin: 0; color: var(--ink-dim); font-size: 15px; }
+
+  .feature { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; padding: 28px 0; }
+  .feature.flip .shot { order: 2; }
+  .feature h3 { font-size: 22px; margin: 0 0 8px; }
+  .feature p { margin: 0 0 8px; color: var(--ink-dim); }
+  .feature ul { margin: 8px 0 0; padding-left: 20px; }
+  .shot.phone img { width: 260px; margin: 0 auto; border-radius: 22px; border: 6px solid #111; box-shadow: 0 12px 32px rgba(0,0,0,.18); }
+  .shot.desk img { border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 12px 32px rgba(0,0,0,.14); }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .tile h3 { margin: 0 0 4px; font-size: 16px; }
+  .tile p { margin: 0; color: var(--ink-dim); font-size: 15px; }
+
+  .platforms { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+  .platforms span { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-weight: 600; }
+
+  .cta { margin: 56px auto 48px; max-width: 1080px; padding: 0 16px; }
+  .cta .box { background: var(--brand); color: #fff; border-radius: 18px; padding: 36px 24px; text-align: center; }
+  .cta h2 { margin: 0 0 8px; font-size: 26px; }
+  .cta p { margin: 0 0 20px; color: rgba(255,255,255,.85); }
+  .cta .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+  @media (max-width: 820px) {
+    .hero .inner { grid-template-columns: 1fr; padding-top: 32px; }
+    .hero h1 { font-size: 34px; }
+    .hero .ctas { margin-bottom: 8px; }
+    .steps, .grid { grid-template-columns: 1fr; }
+    .feature, .feature.flip { grid-template-columns: 1fr; gap: 16px; }
+    .feature.flip .shot { order: 0; }
+    .shot.phone img { width: 220px; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="logo" href="about.html"><img src="app-icon.png" alt="">The H Stock Management</a>
+  <nav><a href="about.html" aria-current="page">Features</a><a href="support.html">Support</a><a href="privacy.html">Privacy</a><a href="https://stock.hatef.cc">Open the app</a></nav>
+</div></header>
+
+<section class="hero"><div class="inner">
+  <div>
+    <h1>Count your stock <em>together</em>, and see every count live.</h1>
+    <p class="lead">Your team scans barcodes with their phones. You follow the progress on the dashboard and export the results to Excel when you're done.</p>
+    <div class="ctas">
+      <a class="btn btn-gold" href="mailto:dr.dish@me.com?subject=The%20H%20Stock%20Management">Get started</a>
+      <a class="btn btn-ghost" href="https://stock.hatef.cc">Open the web app</a>
+    </div>
+  </div>
+  <div class="phones">
+    <img src="site/phone-scan.jpg" alt="Scanning screen on a phone">
+    <img src="site/phone-parts.jpg" alt="An item counted in two places, 12 plus 6">
+  </div>
+</div></section>
+
+<section class="band">
+  <h2>Three simple steps</h2>
+  <p class="sub">No special hardware. Any phone with a camera, or a handheld scanner, works.</p>
+  <div class="steps">
+    <div class="step"><div class="n">1</div><h3>Upload your list</h3><p>Import your products from Excel or CSV. Barcodes and descriptions are found automatically, even for 50,000 items.</p></div>
+    <div class="step"><div class="n">2</div><h3>Your team counts</h3><p>Each person signs in with their own username, scans, types the quantity and saves. Everyone sees it instantly.</p></div>
+    <div class="step"><div class="n">3</div><h3>Watch and export</h3><p>Follow progress live on the dashboard, check anything doubtful, then export every count to Excel.</p></div>
+  </div>
+</section>
+
+<section class="band">
+  <h2>Built for real stock counts</h2>
+  <p class="sub">Everything a shop or warehouse needs on count day.</p>
+
+  <div class="feature">
+    <div class="shot desk"><img src="site/dash-overview.jpg" alt="Live dashboard with progress, counts by person and by area" loading="lazy"></div>
+    <div>
+      <h3>A live dashboard</h3>
+      <p>See overall progress, who counted what and how far each area has come, all updating as your staff scan.</p>
+      <ul><li>Counts over time, by person</li><li>Items not yet counted</li><li>Full activity log</li></ul>
+    </div>
+  </div>
+
+  <div class="feature flip">
+    <div class="shot phone"><img src="site/phone-quick.jpg" alt="Quick count mode" loading="lazy"></div>
+    <div>
+      <h3>Fast counting on the phone</h3>
+      <p>Scan with the camera or a Bluetooth/USB scanner. Found the same item on another shelf? Scan again and the counts add up, with who counted each part and where.</p>
+      <p><strong>Quick count</strong> adds one per scan, with a beep and a vibration, for shelves of small items.</p>
+    </div>
+  </div>
+
+  <div class="feature">
+    <div class="shot desk"><img src="site/dash-areas.jpg" alt="Areas and tasks page" loading="lazy"></div>
+    <div>
+      <h3>Areas and tasks</h3>
+      <p>Split the shop into areas like Main Shop, Warehouse or Cold room, and give each person their own list. Staff see only their own work and progress.</p>
+    </div>
+  </div>
+
+  <div class="feature flip">
+    <div class="shot phone"><img src="site/phone-offline.jpg" alt="Counting while offline" loading="lazy"></div>
+    <div>
+      <h3>Works without signal</h3>
+      <p>No coverage in the back store? Counts are saved on the phone and upload automatically when the connection comes back.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <h2 style="margin-bottom:24px">And more</h2>
+  <div class="grid">
+    <div class="tile"><h3>Blind recounts</h3><p>Ask someone else to count an item again without seeing the first number, then keep the right one.</p></div>
+    <div class="tile"><h3>Staff accounts</h3><p>Create usernames, reset passwords and switch accounts off from the dashboard.</p></div>
+    <div class="tile"><h3>Excel export</h3><p>Every count with who, when and where, ready for your accounts or ERP.</p></div>
+    <div class="tile"><h3>Extra items</h3><p>Record products that weren't on the list, so nothing is missed.</p></div>
+    <div class="tile"><h3>Private by design</h3><p>No ads, no tracking. The camera only reads barcodes.</p></div>
+    <div class="tile"><h3>Ready in minutes</h3><p>No installation for the dashboard: it runs in your browser.</p></div>
+  </div>
+</section>
+
+<section class="band">
+  <h2>Works on every device</h2>
+  <p class="sub">Use the phone apps for counting and the dashboard on any computer.</p>
+  <div class="platforms"><span>iPhone</span><span>Android</span><span>Windows</span><span>Mac</span><span>Web</span></div>
+</section>
+
+<section class="cta"><div class="box">
+  <h2>Ready for your next stock count?</h2>
+  <p>Email us and we'll help you set up your shop.</p>
+  <div class="ctas">
+    <a class="btn btn-gold" href="mailto:dr.dish@me.com?subject=The%20H%20Stock%20Management">dr.dish@me.com</a>
+    <a class="btn btn-ghost" href="https://stock.hatef.cc">Open the web app</a>
+  </div>
+</div></section>
+
+<footer class="foot"><div class="inner">
+  <span class="copy">© 2026 Hatef</span>
+  <a href="about.html">Features</a><a href="support.html">Support</a><a href="privacy.html">Privacy policy</a>
+</div></footer>
+</body>
+</html>
