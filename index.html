@@ -182,6 +182,18 @@
   .icon-btn.go { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
   .icon-btn.go:active { box-shadow: 0 0 0 rgba(255,255,255,.35); }
   .icon-btn[hidden] { display: none; }
+  .icon-btn.cam-on { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
+  /* Camera view inside the black scan card */
+  .cam-inline { position: relative; margin-top: 14px; }
+  .scan-hero:has(#camInline) .laser { display: none; } /* the live camera replaces the decoration */
+  .cam-inline .cam-wrap { aspect-ratio: 4 / 3; margin-bottom: 10px; border: 1px solid rgba(255,255,255,.18); }
+  .cam-inline .corner.tl { top: 22%; left: 12%; }
+  .cam-inline .corner.tr { top: 22%; right: 12%; }
+  .cam-inline .corner.bl { bottom: 22%; left: 12%; }
+  .cam-inline .corner.br { bottom: 22%; right: 12%; }
+  .cam-close { position: absolute; top: 10px; right: 10px; z-index: 2; width: 38px; height: 38px; border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; cursor: pointer; }
+  .cam-status { position: relative; margin: 0; font-size: 12.5px; line-height: 1.45; color: rgba(255,255,255,.8); }
+  .cam-retry:not(:empty) { position: relative; margin-top: 10px; }
 
   .btn {
     padding: 12px 16px; border-radius: var(--radius-sm); border: 1.5px solid transparent; font-size: 14px;
@@ -294,7 +306,6 @@
   .quick-card .sc-desc { margin: 0; font-size: 15px; }
   .quick-card .quick-added, .quick-card .quick-msg { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
   .quick-card .quick-total { font-size: 30px; font-weight: 700; }
-  #camQuick .quick-card { box-shadow: none; }
   .quick-card .sc-barcode { font-size: 12px; color: var(--ink-dim); }
   .qty-row input::placeholder { font-size: 15px; font-weight: 500; font-family: "Inter", system-ui, sans-serif; }
   .btn-sm { padding: 7px 10px; font-size: 12.5px; }
@@ -1075,6 +1086,7 @@
    * Tabs
    * ------------------------------------------------------------- */
   function switchTab(tab) {
+    if (tab !== "scan") closeCameraScanner();
     state.activeTab = tab;
     $all("nav.tabs button").forEach(function (b) { b.classList.toggle("active", b.dataset.tab === tab); });
     $all("main > section").forEach(function (s) { s.style.display = "none"; });
@@ -1088,6 +1100,7 @@
    * SCAN TAB
    * ------------------------------------------------------------- */
   function renderScanTab() {
+    closeCameraScanner();
     var root = $("#tab-scan");
     root.innerHTML = "";
     root.appendChild(el("div", { id: "taskPanel" }));
@@ -1105,7 +1118,7 @@
     goBtn.appendChild(arrowIcon());
     goBtn.hidden = true;
     input.addEventListener("input", function () { goBtn.hidden = !input.value.trim(); });
-    var camBtn = el("button", { type: "button", class: "icon-btn", title: "Scan with camera" });
+    var camBtn = el("button", { type: "button", class: "icon-btn", id: "camBtn", title: "Scan with camera", "aria-label": "Scan with camera" });
     camBtn.appendChild(cameraIcon());
     form.appendChild(input);
     form.appendChild(goBtn);
@@ -1118,10 +1131,9 @@
       var typed = e.submitter === goBtn;
       handleScan(input.value).then(function () { if (typed) input.blur(); });
     });
-    camBtn.addEventListener("click", function () {
-      if (state.quickCount) { unlockFeedback(); openQuickCamera(); } else openCameraScanner();
-    });
+    camBtn.addEventListener("click", toggleCamera);
     hero.appendChild(form);
+    hero.appendChild(el("div", { id: "camHost" }));
     var quick = el("label", { class: "quick-toggle" + (state.quickCount ? " on" : "") }, [
       el("input", { type: "checkbox" }),
       el("span", { class: "switch" }),
@@ -1130,6 +1142,7 @@
     var qbox = quick.querySelector("input");
     qbox.checked = state.quickCount;
     qbox.addEventListener("change", function () {
+      closeCameraScanner();
       state.quickCount = qbox.checked;
       lsSet("sc-quick", state.quickCount ? "1" : "");
       quick.classList.toggle("on", state.quickCount);
@@ -1470,7 +1483,7 @@
     e.unlogged = 0;
   }
   function flushQuickLogs() { Object.keys(quick.items).forEach(function (id) { logQuick(quick.items[id]); }); }
-  document.addEventListener("visibilitychange", function () { if (document.hidden) flushQuickLogs(); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) { flushQuickLogs(); closeCameraScanner(); } });
   // Browsers only allow sound after a tap or key press (handheld scanners type keys)
   document.addEventListener("pointerdown", function () { if (state.quickCount) unlockFeedback(); }, true);
   document.addEventListener("keydown", function () { if (state.quickCount) unlockFeedback(); }, true);
@@ -1493,15 +1506,15 @@
     return card;
   }
   function renderQuickCard() {
-    [$("#quickHolder"), $("#camQuick")].forEach(function (h) {
+    [$("#quickHolder")].forEach(function (h) {
       if (!h) return;
       h.innerHTML = "";
-      if (h.id === "quickHolder" && !state.quickCount) return;
+      if (!state.quickCount) return;
       h.appendChild(quickCardEl());
     });
   }
   function showQuickMessage(code, text) {
-    [$("#quickHolder"), $("#camQuick")].forEach(function (h) {
+    [$("#quickHolder")].forEach(function (h) {
       if (!h) return;
       h.innerHTML = "";
       h.appendChild(el("div", { class: "quick-card warn" }, [el("div", { class: "quick-info" }, [
@@ -1531,174 +1544,133 @@
     else if (navigator.vibrate) { try { navigator.vibrate(ok ? 60 : [120, 80, 120]); } catch (e) {} }
   }
 
-  // Quick count with the camera: stays open and adds 1 per scan. In the page
-  // (browser and the iPhone app) when the camera is available there; otherwise
-  // the iPhone app's system scanner reopens after every scan until cancelled.
-  // A barcode held in view counts once; the same barcode counts again only
-  // after it has been out of view this long (the next identical item)
+  /* ---------------------------------------------------------------
+   * Camera scanning (ZXing), inside the black scan card. In the browser and
+   * in the apps; if the camera can't run in the page, the apps fall back to
+   * the system's full-screen scanner.
+   * Quick count: the camera stays open and adds 1 per scan. A barcode held
+   * in view counts once; the same barcode counts again only after it has
+   * been out of view this long (the next identical item)
+   * ------------------------------------------------------------- */
   var QUICK_GAP_MS = 1200;
-  function openQuickCamera() {
-    var canPage = typeof ZXing !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+  var zxingReader = null;
+  var camSession = 0; // bumped on close, so a camera that starts late is stopped
+
+  function toggleCamera() {
+    if ($("#camInline")) { closeCameraScanner(); return; }
+    if (state.quickCount) unlockFeedback();
+    openCamera(state.quickCount);
+  }
+
+  function openCamera(quick) {
     var nativeScanner = nativePlugin("CapacitorBarcodeScanner");
-    if (!canPage) { if (nativeScanner) nativeQuickLoop(nativeScanner); else toast("Camera scanning isn't available here \u2014 use a handheld scanner or type the barcode"); return; }
-    var overlay = el("div", { class: "modal-overlay", id: "camOverlay" });
-    var modal = el("div", { class: "modal" });
-    modal.appendChild(el("h3", { text: "Quick count" }));
-    var camWrap = el("div", { class: "cam-wrap" });
+    var host = $("#camHost");
+    var canPage = typeof ZXing !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+    if (!canPage || !host) { nativeScan(nativeScanner, quick); return; }
+    closeCameraScanner();
+    var session = camSession;
+    // Close the keypad so the camera view has room
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+
+    var box = el("div", { class: "cam-inline", id: "camInline" });
+    var wrap = el("div", { class: "cam-wrap" });
     var video = el("video");
     video.setAttribute("autoplay", ""); video.setAttribute("playsinline", ""); video.muted = true; video.playsInline = true;
-    camWrap.appendChild(video);
-    ["tl", "tr", "bl", "br"].forEach(function (c) { camWrap.appendChild(el("div", { class: "corner " + c })); });
-    modal.appendChild(camWrap);
-    var status = el("p", { text: "Requesting camera access\u2026" });
-    modal.appendChild(status);
-    modal.appendChild(el("div", { id: "camQuick" }));
-    var done = el("button", { class: "btn btn-primary btn-block", text: "Done" });
-    done.addEventListener("click", function () { closeCameraScanner(); renderQuickCard(); });
-    modal.appendChild(done);
-    overlay.appendChild(modal);
-    $("#modalRoot").appendChild(overlay);
-    renderQuickCard();
+    wrap.appendChild(video);
+    ["tl", "tr", "bl", "br"].forEach(function (c) { wrap.appendChild(el("div", { class: "corner " + c })); });
+    var closeBtn = el("button", { type: "button", class: "cam-close", title: "Close camera", "aria-label": "Close camera" });
+    closeBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    closeBtn.addEventListener("click", closeCameraScanner);
+    wrap.appendChild(closeBtn);
+    box.appendChild(wrap);
+    var status = el("p", { class: "cam-status", text: "Requesting camera access…" });
+    box.appendChild(status);
+    var retryRow = el("div", { class: "cam-retry" });
+    box.appendChild(retryRow);
+    host.appendChild(box);
+    setCamButton(true);
+    box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
     var lastText = "", lastSeen = 0;
-    try {
-      zxingReader = new ZXing.BrowserMultiFormatReader();
-      zxingReader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" } } }, video, function (result) {
-        if (!result) return;
-        var text = result.getText(), now = Date.now();
-        var again = text === lastText && now - lastSeen < QUICK_GAP_MS;
+    function onResult(result) {
+      if (!result || session !== camSession) return;
+      var text = result.getText();
+      if (quick) {
+        var now = Date.now(), again = text === lastText && now - lastSeen < QUICK_GAP_MS;
         lastText = text; lastSeen = now;
         if (!again) quickAdd(text);
-      }).then(function (controls) {
-        zxingStream = controls;
-        status.textContent = "Point the camera at each item. Each scan adds 1 \u2014 move it out of view before the next one.";
-      }).catch(function (e) {
-        closeCameraScanner();
-        if (nativeScanner) nativeQuickLoop(nativeScanner);
-        else toast("Couldn't open the camera (" + ((e && e.name) || "error") + ")");
-      });
-    } catch (e) {
+        return;
+      }
       closeCameraScanner();
-      if (nativeScanner) nativeQuickLoop(nativeScanner);
+      handleScan(text);
     }
-  }
-  function nativeQuickLoop(scanner) {
-    scanner.scanBarcode({ hint: 17, scanInstructions: "Quick count: each scan adds 1. Cancel when done.", scanButton: false, cameraDirection: 1, scanOrientation: 3 })
-      .then(function (res) {
-        if (!res || !res.ScanResult) return;
-        return quickAdd(res.ScanResult).then(function () { setTimeout(function () { if (state.quickCount) nativeQuickLoop(scanner); }, 350); });
-      }).catch(function (e) {
-        var msg = String((e && (e.message || e.code)) || "");
-        if (!/cancel/i.test(msg)) toast("Couldn't scan: " + (msg || "error"));
-      });
-  }
-
-  /* ---------------------------------------------------------------
-   * Camera scanning (ZXing) - optional, degrades gracefully
-   * ------------------------------------------------------------- */
-  var zxingReader = null;
-  var zxingStream = null;
-  function openCameraScanner() {
-    var nativeScanner = nativePlugin("CapacitorBarcodeScanner");
-    if (nativeScanner) {
-      // iOS and Android apps: full-screen system camera scanner
-      nativeScanner.scanBarcode({
-        hint: 17, // all barcode formats
-        scanInstructions: "Point the camera at a barcode",
-        scanButton: false,
-        cameraDirection: 1, // back camera
-        scanOrientation: 3  // follow device orientation
-      }).then(function (res) {
-        if (res && res.ScanResult) handleScan(res.ScanResult);
-      }).catch(function (e) {
-        var msg = String((e && (e.message || e.code)) || "");
-        if (/cancel/i.test(msg)) return;
-        toast("Couldn't scan: " + (msg || "error"));
-      });
-      return;
-    }
-    if (typeof ZXing === "undefined") {
-      toast("Camera scanning isn't available here \u2014 type the barcode instead");
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      toast("This browser can't offer camera access here \u2014 type the barcode instead");
-      return;
-    }
-    var overlay = el("div", { class: "modal-overlay", id: "camOverlay" });
-    var modal = el("div", { class: "modal" });
-    modal.appendChild(el("h3", { text: "Scan a barcode" }));
-    var camWrap = el("div", { class: "cam-wrap" });
-    var video = el("video");
-    video.setAttribute("autoplay", "");
-    video.setAttribute("playsinline", "");
-    video.muted = true;
-    video.playsInline = true;
-    camWrap.appendChild(video);
-    camWrap.appendChild(el("div", { class: "corner tl" }));
-    camWrap.appendChild(el("div", { class: "corner tr" }));
-    camWrap.appendChild(el("div", { class: "corner bl" }));
-    camWrap.appendChild(el("div", { class: "corner br" }));
-    modal.appendChild(camWrap);
-    var status = el("p", { text: "Requesting camera access\u2026" });
-    modal.appendChild(status);
-    var retryRow = el("div", { class: "btn-row", style: "margin-bottom:8px", id: "camRetryRow" });
-    modal.appendChild(retryRow);
-    var closeBtn = el("button", { class: "btn btn-secondary btn-block", text: "Cancel" });
-    closeBtn.addEventListener("click", closeCameraScanner);
-    modal.appendChild(closeBtn);
-    overlay.appendChild(modal);
-    $("#modalRoot").appendChild(overlay);
-
-    function tryStart(constraints, label) {
-      try {
-        zxingReader = new ZXing.BrowserMultiFormatReader();
-        zxingReader.decodeFromConstraints(
-          constraints,
-          video,
-          function (result) {
-            if (result) {
-              var text = result.getText();
-              closeCameraScanner();
-              handleScan(text);
-            }
-          }
-        ).then(function (controls) {
-          status.textContent = "Point your camera at a barcode";
-          retryRow.innerHTML = "";
-          zxingStream = controls;
-        }).catch(function (e) {
-          handleCamError(e, label);
-        });
-      } catch (e) {
-        handleCamError(e, label);
-      }
-    }
-
-    function handleCamError(e, label) {
-      var name = (e && e.name) || "Error";
+    function start(constraints) {
       retryRow.innerHTML = "";
+      try { if (zxingReader) zxingReader.reset(); } catch (e) {}
+      var reader;
+      try {
+        reader = zxingReader = new ZXing.BrowserMultiFormatReader();
+        reader.decodeFromConstraints(constraints, video, onResult).then(function () {
+          if (session !== camSession) { try { reader.reset(); } catch (e) {} return; }
+          status.textContent = quick
+            ? "Point the camera at each item. Each scan adds 1 — move it out of view before the next one."
+            : "Point the camera at a barcode";
+        }).catch(function (e) { fail(e, constraints); });
+      } catch (e) { fail(e, constraints); }
+    }
+    function fail(e, constraints) {
+      if (session !== camSession) return;
+      var name = (e && e.name) || "Error";
       if (name === "NotAllowedError" || name === "SecurityError") {
-        status.textContent = "Camera access was blocked (" + name + "). If your browser or app just asked for permission, allow it and try again \u2014 otherwise check camera permissions in your browser or device settings.";
-        var retryBtn = el("button", { class: "btn btn-primary", text: "Try again" });
-        retryBtn.addEventListener("click", function () { tryStart({ video: { facingMode: { ideal: "environment" } } }, "environment"); });
-        retryRow.appendChild(retryBtn);
-      } else if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
-        status.textContent = "That camera isn't available. Trying another camera\u2026";
-        tryStart({ video: true }, "any");
+        status.textContent = "Camera access is blocked. Allow the camera for this app in your phone's Settings, then try again.";
+        var retry = el("button", { type: "button", class: "btn btn-primary btn-sm", text: "Try again" });
+        retry.addEventListener("click", function () { status.textContent = "Requesting camera access…"; start({ video: { facingMode: { ideal: "environment" } } }); });
+        retryRow.appendChild(retry);
+      } else if ((name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") && constraints.video !== true) {
+        start({ video: true });
+      } else if (nativeScanner) {
+        closeCameraScanner();
+        nativeScan(nativeScanner, quick);
       } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        status.textContent = "No camera was found on this device.";
+        status.textContent = "No camera was found on this device. Type the barcode instead.";
       } else {
-        status.textContent = "Couldn't access the camera (" + name + "). You can type the barcode instead.";
+        status.textContent = "Couldn't open the camera (" + name + "). Type the barcode instead.";
       }
     }
-
-    tryStart({ video: { facingMode: { ideal: "environment" } } }, "environment");
+    start({ video: { facingMode: { ideal: "environment" } } });
   }
+
+  function setCamButton(on) {
+    var b = $("#camBtn");
+    if (!b) return;
+    b.classList.toggle("cam-on", on);
+    b.title = on ? "Close camera" : "Scan with camera";
+    b.setAttribute("aria-label", b.title);
+  }
+
   function closeCameraScanner() {
+    camSession++;
     try { if (zxingReader) zxingReader.reset(); } catch (e) {}
-    zxingReader = null; zxingStream = null;
-    var o = $("#camOverlay");
-    if (o) o.remove();
+    zxingReader = null;
+    var box = $("#camInline");
+    if (box) box.remove();
+    setCamButton(false);
+  }
+
+  // The system's full-screen scanner (iOS and Android apps), when the camera
+  // can't run in the page. In Quick count it reopens after every scan until cancelled.
+  var SYSTEM_SCAN = { hint: 17, scanButton: false, cameraDirection: 1, scanOrientation: 3 }; // all formats, back camera
+  function nativeScan(scanner, quick) {
+    if (!scanner) { toast("Camera scanning isn't available here — use a handheld scanner or type the barcode"); return; }
+    var opts = Object.assign({}, SYSTEM_SCAN, { scanInstructions: quick ? "Quick count: each scan adds 1. Cancel when done." : "Point the camera at a barcode" });
+    scanner.scanBarcode(opts).then(function (res) {
+      if (!res || !res.ScanResult) return;
+      if (!quick) { handleScan(res.ScanResult); return; }
+      return quickAdd(res.ScanResult).then(function () { setTimeout(function () { if (state.quickCount) nativeScan(scanner, true); }, 350); });
+    }).catch(function (e) {
+      var msg = String((e && (e.message || e.code)) || "");
+      if (!/cancel/i.test(msg)) toast("Couldn't scan: " + (msg || "error"));
+    });
   }
 
   /* ---------------------------------------------------------------
@@ -2178,7 +2150,7 @@
     var App = nativePlugin("App");
     if (!App || !App.addListener) return;
     App.addListener("backButton", function () {
-      if ($("#camOverlay")) { closeCameraScanner(); return; }
+      if ($("#camInline")) { closeCameraScanner(); return; }
       var modal = $("#modalRoot").lastElementChild;
       if (modal) { modal.remove(); return; }
       if (state.currentScan) { state.currentScan = null; renderScannedCard(); return; }
