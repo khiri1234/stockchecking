@@ -182,12 +182,13 @@
   .icon-btn.go { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
   .icon-btn.go:active { box-shadow: 0 0 0 rgba(255,255,255,.35); }
   .icon-btn[hidden] { display: none; }
-  /* Camera as a watermark behind the black scan card's content */
+  /* Camera behind the black scan card: clear inside the barcode box, a faint
+     watermark everywhere else (the mask darkens all but the box) */
   .cam-inline { position: absolute; inset: 0; pointer-events: none; }
-  .cam-inline video { width: 100%; height: 100%; object-fit: cover; opacity: .18; }
-  .scan-hero:has(#camInline) .scan-form input { background: transparent; } /* the camera shows through the barcode box */
-  .scan-hero:has(#camInline) .scan-form input:not(:focus) { border-color: rgba(255,255,255,.08); }
-  .scan-hero:has(#camInline) .scan-form input::placeholder { color: rgba(255,255,255,.25); }
+  .cam-inline video { width: 100%; height: 100%; object-fit: cover; }
+  .cam-mask { position: absolute; border-radius: var(--radius-sm); box-shadow: 0 0 0 100vmax rgba(20,23,28,.82); }
+  .scan-hero:has(#camInline) .scan-form input { background: transparent; border-color: var(--accent); }
+  .scan-hero:has(#camInline) .scan-form input::placeholder { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.85); }
   .scan-hero:has(#camInline) :is(h2, p.hint, .quick-toggle) { text-shadow: 0 1px 3px rgba(0,0,0,.85); } /* readable over a bright picture */
 
   .btn {
@@ -1564,8 +1565,20 @@
     var video = el("video");
     video.setAttribute("autoplay", ""); video.setAttribute("playsinline", ""); video.muted = true; video.playsInline = true;
     box.appendChild(video);
+    var mask = el("div", { class: "cam-mask" });
+    box.appendChild(mask);
     host.appendChild(box);
     setCamButton(true);
+    // Keep the clear window lined up with the barcode box (it narrows when the arrow button shows)
+    var field = $("#scanInput"), hero = host.parentNode;
+    function placeMask() {
+      if (!field || !box.isConnected) return;
+      var f = field.getBoundingClientRect(), h = hero.getBoundingClientRect();
+      mask.style.left = (f.left - h.left) + "px"; mask.style.top = (f.top - h.top) + "px";
+      mask.style.width = f.width + "px"; mask.style.height = f.height + "px";
+    }
+    placeMask();
+    if (window.ResizeObserver && field) { var ro = new ResizeObserver(placeMask); ro.observe(field); ro.observe(hero); box._ro = ro; }
 
     var lastText = "", lastSeen = 0;
     function onResult(result) {
@@ -1615,7 +1628,7 @@
     try { if (zxingReader) zxingReader.reset(); } catch (e) {}
     zxingReader = null;
     var box = $("#camInline");
-    if (box) box.remove();
+    if (box) { if (box._ro) box._ro.disconnect(); box.remove(); }
     setCamButton(false);
   }
 
