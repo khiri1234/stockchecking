@@ -8,6 +8,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
+        // The keyboard shrinks the web view, and the floating iOS keyboard has
+        // rounded corners, so the window shows around it. Match the app's
+        // background (#EDEFF2) instead of the default black.
+        window?.backgroundColor = UIColor(red: 0xED / 255.0, green: 0xEF / 255.0, blue: 0xF2 / 255.0, alpha: 1)
         window?.rootViewController = CAPBridgeViewController()
         window?.makeKeyAndVisible()
 
