@@ -182,13 +182,8 @@
   .icon-btn.go { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
   .icon-btn.go:active { box-shadow: 0 0 0 rgba(255,255,255,.35); }
   .icon-btn[hidden] { display: none; }
-  .icon-btn.cam-on { background: #fff; color: var(--accent-2); box-shadow: 0 3px 0 rgba(255,255,255,.35); }
-  /* Camera view inside the black scan card: fills the card at its current size */
-  .scan-hero.cam-mode > :not(#camHost):not(.laser) { visibility: hidden; }
-  .scan-hero.cam-mode::before { display: none; }
-  .scan-hero.cam-mode .laser { z-index: 2; }
-  .scan-hero.cam-mode #camHost { position: absolute; inset: 0; }
-  .cam-inline { position: absolute; inset: 0; background: #000; }
+  /* Camera reader: its own box right below the black scan card, the same size */
+  .cam-inline { position: relative; overflow: hidden; border-radius: var(--radius-lg); background: #000; margin-bottom: 14px; box-shadow: var(--shadow-lg); }
   .cam-inline .cam-wrap { position: absolute; inset: 0; aspect-ratio: auto; margin: 0; border-radius: 0; }
   .cam-inline .corner.tl { top: 18%; left: 10%; }
   .cam-inline .corner.tr { top: 18%; right: 10%; }
@@ -1137,7 +1132,6 @@
     });
     camBtn.addEventListener("click", toggleCamera);
     hero.appendChild(form);
-    hero.appendChild(el("div", { id: "camHost" }));
     var quick = el("label", { class: "quick-toggle" + (state.quickCount ? " on" : "") }, [
       el("input", { type: "checkbox" }),
       el("span", { class: "switch" }),
@@ -1155,6 +1149,7 @@
     });
     hero.appendChild(quick);
     root.appendChild(hero);
+    root.appendChild(el("div", { id: "camHost" }));
     root.appendChild(el("div", { id: "quickHolder" }));
     renderQuickCard();
 
@@ -1591,11 +1586,12 @@
     box.appendChild(status);
     var retryRow = el("div", { class: "cam-retry" });
     box.appendChild(retryRow);
-    // Keep the card exactly its current size; the camera fills it
-    var hero = host.closest(".scan-hero");
-    if (hero) { hero.style.height = hero.offsetHeight + "px"; hero.classList.add("cam-mode"); }
+    // Same size as the black card above it
+    var hero = $("#tab-scan .scan-hero");
+    box.style.height = (hero ? hero.offsetHeight : 200) + "px";
     host.appendChild(box);
     setCamButton(true);
+    box.scrollIntoView({ block: "nearest", behavior: "smooth" });
 
     var lastText = "", lastSeen = 0;
     function onResult(result) {
@@ -1649,7 +1645,6 @@
   function setCamButton(on) {
     var b = $("#camBtn");
     if (!b) return;
-    b.classList.toggle("cam-on", on);
     b.title = on ? "Close camera" : "Scan with camera";
     b.setAttribute("aria-label", b.title);
   }
@@ -1660,8 +1655,6 @@
     zxingReader = null;
     var box = $("#camInline");
     if (box) box.remove();
-    var hero = $(".scan-hero.cam-mode");
-    if (hero) { hero.classList.remove("cam-mode"); hero.style.height = ""; }
     setCamButton(false);
   }
 
