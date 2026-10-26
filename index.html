@@ -185,6 +185,7 @@
   /* Camera as a watermark behind the black scan card's content */
   .cam-inline { position: absolute; inset: 0; pointer-events: none; }
   .cam-inline video { width: 100%; height: 100%; object-fit: cover; opacity: .18; }
+  .scan-hero:has(#camInline) .scan-form input { background: transparent; } /* the camera shows through the barcode box */
   .scan-hero:has(#camInline) :is(h2, p.hint, .quick-toggle) { text-shadow: 0 1px 3px rgba(0,0,0,.85); } /* readable over a bright picture */
 
   .btn {
