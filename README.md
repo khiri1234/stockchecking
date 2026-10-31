@@ -145,6 +145,73 @@ latest 100 counts) and the results with the same two buttons, all under
 The site is hosted on GitHub Pages; `firebase deploy` also works (see
 `firebase.json`).
 
+## Businesses and subscriptions
+
+Anyone can install the app and choose **New business? Create one**. They become
+that business's owner and first admin, and get a six-character **business
+code** (for example `K7M2QX`). Staff sign in with the business code plus the
+username and password their admin made. Each business's data is completely
+separate: the security rules only let a business's own accounts read it.
+
+- **Where data lives.** A new business keeps everything under
+  `businesses/{biz}/` (`catalog`, `counts`, `users`, `usernames`, `activity`...).
+  `businesses/{biz}` holds its name, code, owner and subscription status;
+  `codes/{CODE}` maps a code to its business; `members/{uid}` maps a sign-in
+  account to its business.
+- **The first business** (set up before businesses existed) keeps its data at
+  the top level, unchanged, so copies of the app already installed keep
+  working. Its staff can leave the business code empty. An admin can give it a
+  code from the dashboard's Staff page or the app's account menu
+  (**Get a business code**). It never needs a subscription.
+- **Deleting.** The owner can delete the whole business (account menu >
+  **Delete business**): product list, counts, staff records, activity log and
+  their own account. Staff sign-in accounts stay in Firebase Authentication
+  without access.
+
+### Subscriptions (in-app purchase)
+
+The owner subscribes once in the iPhone or Android app; every staff phone of
+the business sees it. Purchases go through RevenueCat
+(`@revenuecat/purchases-capacitor`), whose customer ID is the business ID.
+The dashboard and web app can't take payments: they read the status the phones
+record on `businesses/{biz}.plan` and show "subscribe in the app" until it's
+active.
+
+While both keys in `SUBSCRIPTIONS` at the top of `common.js` are empty,
+nobody is asked to pay; fill them in to switch subscriptions on. One-time
+setup:
+
+1. **App Store Connect** > your app > **Subscriptions**: create a subscription
+   group (e.g. "The H Stock Management") with a product such as
+   `hstock_monthly` (and `hstock_yearly` if you like). Set prices, and add an
+   introductory offer (e.g. 7 days free) if wanted. Fill in each product's
+   display name, description and review screenshot (the subscription screen).
+   Sign the **Paid Apps Agreement** (Business section), and create an
+   **In-App Purchase key** for RevenueCat (Users and Access > Integrations >
+   In-App Purchase).
+2. **Google Play Console** > your app > **Monetize > Subscriptions**: create
+   the same product IDs with a base plan each (and a free-trial offer). Link a
+   Google Cloud service account for RevenueCat (RevenueCat's guide walks
+   through it).
+3. **RevenueCat** (app.revenuecat.com, free to start): create a project, add
+   the App Store app (bundle ID `com.khiri1234.stockcheck`, the In-App
+   Purchase key) and the Play Store app. Create an **entitlement** with the
+   identifier `full_access`, attach the products to it, and put them in the
+   **default offering** as packages (Monthly / Annual).
+4. Copy RevenueCat's public **Apple API key** (`appl_...`) and **Google API
+   key** (`goog_...`) into `SUBSCRIPTIONS` in `common.js`, then rebuild both
+   apps (`npm run ios`, `npm run android`).
+5. In Xcode: **App** target > **Signing & Capabilities** > **+ Capability** >
+   **In-App Purchase**.
+6. Test with a Sandbox tester (App Store Connect > Users and Access > Sandbox)
+   and a Play licence tester before submitting. Add the subscription products
+   to the app version when you submit it for review.
+
+The subscription status the phones record is not checked by a server: a
+determined user could change it for their own business. To make it
+tamper-proof later, add a RevenueCat webhook to a Cloud Function that writes
+`businesses/{biz}.plan` and drop client writes of `plan` from the rules.
+
 ## iPhone app (App Store)
 
 The `ios/` folder is a Capacitor Xcode project that wraps `index.html`. In the
@@ -170,7 +237,11 @@ After any change to `index.html`, run `npm run ios` again before archiving.
   (`support.html`); Marketing URL: `https://stock.hatef.cc/about.html`
   (`about.html`). The three public pages share `site/site.css`.
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
-  and put its username and password in App Store Connect > App Review Information
+  and put its business code, username and password in App Store Connect >
+  App Review Information (the notes field takes the code). Also mention that
+  reviewers can create their own business and subscribe with a sandbox account.
+- Public listing: App Store Connect > **Pricing and Availability > App
+  Distribution Methods > Public**, with the subscriptions set up as above
 
 ## Android app
 

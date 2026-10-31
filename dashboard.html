@@ -312,6 +312,10 @@
   .field .help { font-size: 12px; color: var(--ink-muted); margin-top: 4px; display: block; }
   .form-error { color: var(--bad); font-size: 13px; margin: 2px 0 12px; line-height: 1.4; }
   .form-error:empty { display: none; }
+  .code-note { margin: 0 0 16px; padding: 12px 14px; border-radius: var(--radius); background: rgba(0,0,0,.04); text-align: center; }
+  .code-note span, .code-note small { display: block; font-size: 12.5px; color: var(--ink-dim); }
+  .code-note b { display: block; font-size: 26px; letter-spacing: .12em; margin: 4px 0; }
+  .biz-code { letter-spacing: .08em; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(15,17,20,.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .modal { background: var(--surface); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 420px; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
   .modal h3 { margin: 0 0 6px; font-family: "Space Grotesk", sans-serif; font-size: 18px; }
@@ -488,10 +492,10 @@
   }
 
   /* ---------------- sign-in ---------------- */
-  async function showAuthScreen(message) {
-    var mode = "login";
+  async function showAuthScreen(message, wantMode) {
+    var mode = wantMode || "login";
     // Don't leave people waiting if the server is slow: assume sign-in
-    try { if (!(await SC.withTimeout(SC.isSetupDone(), 5000))) mode = "setup"; } catch (e) {}
+    if (!wantMode) try { if (!(await SC.withTimeout(SC.isSetupDone(), 5000))) mode = "setup"; } catch (e) {}
     if (state.user) return;
     document.body.classList.add("signed-out");
     var root = $("#authRoot");
@@ -506,22 +510,27 @@
     var inputs = {};
     var fields = mode === "setup"
       ? [["name", "Your name", "text", "name"], ["username", "Username", "text", "username"], ["password", "Password (6+ characters)", "password", "new-password"], ["confirm", "Repeat password", "password", "new-password"]]
-      : [["username", "Username", "text", "username"], ["password", "Password", "password", "current-password"]];
+      : mode === "create"
+        ? [["business", "Business name", "text", "organization"], ["name", "Your name", "text", "name"], ["username", "Choose a username", "text", "username"], ["password", "Password (6+ characters)", "password", "new-password"], ["confirm", "Repeat password", "password", "new-password"]]
+        : [["code", "Business code", "text", "off"], ["username", "Username", "text", "username"], ["password", "Password", "password", "current-password"]];
     var form = el("form");
     fields.forEach(function (f, i) {
-      inputs[f[0]] = el("input", { type: f[2], name: f[0], autocomplete: f[3], autocapitalize: "none", spellcheck: "false", required: "required",
+      inputs[f[0]] = el("input", { type: f[2], name: f[0], autocomplete: f[3], autocapitalize: f[0] === "code" ? "characters" : "none", spellcheck: "false",
         enterkeyhint: i === fields.length - 1 ? "go" : "next" });
+      // The business code may be left empty (accounts made before business codes existed)
+      if (f[0] !== "code") inputs[f[0]].setAttribute("required", "required");
+      else { inputs.code.value = SC.savedCode(); inputs.code.setAttribute("maxlength", "8"); inputs.code.style.textTransform = "uppercase"; }
       form.appendChild(el("label", { class: "field" }, [el("span", { text: f[1] }), inputs[f[0]]]));
     });
     var errorBox = el("div", { class: "form-error", role: "alert", text: message || "" });
-    var submit = el("button", { type: "submit", class: "btn btn-primary btn-block", text: mode === "setup" ? "Create admin account" : "Sign in" });
+    var submit = el("button", { type: "submit", class: "btn btn-primary btn-block", text: mode === "setup" ? "Create admin account" : mode === "create" ? "Create business" : "Sign in" });
     form.appendChild(errorBox);
     form.appendChild(submit);
     // No mouse needed: Enter moves to the next empty box, and signs in from the last one
     form.addEventListener("keydown", function (e) {
       if (e.key !== "Enter" || e.target.tagName !== "INPUT") return;
       e.preventDefault();
-      var boxes = Array.prototype.slice.call(form.querySelectorAll("input"));
+      var boxes = Array.prototype.slice.call(form.querySelectorAll("input")).filter(function (b) { return b.name !== "code"; });
       var next = boxes.slice(boxes.indexOf(e.target) + 1).filter(function (b) { return !b.value; })[0]
         || boxes.filter(function (b) { return !b.value; })[0];
       if (next) next.focus();
@@ -530,22 +539,32 @@
     form.addEventListener("submit", async function (e) {
       e.preventDefault();
       errorBox.textContent = "";
-      if (mode === "setup") {
+      if (mode !== "login") {
         if (!inputs.name.value.trim()) { errorBox.textContent = "Enter your name."; return; }
         if (inputs.password.value !== inputs.confirm.value) { errorBox.textContent = "The passwords don't match."; return; }
       }
       var label = submit.textContent;
       submit.disabled = true;
-      submit.textContent = mode === "setup" ? "Creating account…" : "Signing in…";
+      submit.textContent = mode === "login" ? "Signing in…" : "Creating…";
       try {
         if (mode === "setup") await SC.setupFirstAdmin(inputs.name.value, inputs.username.value, inputs.password.value);
-        else await SC.signIn(inputs.username.value, inputs.password.value);
+        else if (mode === "create") {
+          var made = await SC.createBusiness({ businessName: inputs.business.value, name: inputs.name.value, username: inputs.username.value, password: inputs.password.value });
+          // The dashboard (or the subscription screen) is already open by now
+          if ($("#authRoot").hidden) showNewBusinessCode(made.code);
+          else {
+            state.newBusinessCode = made.code;
+            var card = $("#authRoot .auth-card");
+            if (card && $("#authRoot").dataset.mode === "paywall") card.insertBefore(codeNote(made.code), card.querySelector(".form-error"));
+          }
+        }
+        else await SC.signIn(inputs.username.value, inputs.password.value, inputs.code.value);
       } catch (err) {
         errorBox.textContent = SC.friendlyError(err);
         submit.disabled = false;
         submit.textContent = label;
         // Wrong password: clear it and put the cursor back, ready to retype
-        if (mode !== "setup" && /^auth\/(wrong-password|invalid-credential|invalid-login-credentials|user-not-found)$/.test(err && err.code)) {
+        if (mode === "login" && /^auth\/(wrong-password|invalid-credential|invalid-login-credentials|user-not-found)$/.test(err && err.code)) {
           inputs.password.value = ""; inputs.password.focus();
         }
       }
@@ -554,9 +573,14 @@
       el("div", { class: "auth-brand" }, [el("div", { class: "glyph", html: '<img src="app-icon.png" alt="">' }), el("h1", { text: "The H Stock Management" })]),
       el("p", { class: "auth-sub", text: mode === "setup"
         ? "First-time setup: create the admin account. You'll add staff accounts after this."
-        : "Sign in with your username and password." }),
-      form
-    ]));
+        : mode === "create"
+          ? "Create your business. You'll be its admin, and you'll add staff accounts after this."
+          : "Sign in with your business code, username and password." }),
+      form,
+      mode === "setup" ? null : el("button", { type: "button", class: "btn btn-secondary btn-block", style: "margin-top:10px",
+        text: mode === "create" ? "I already have an account \u2014 sign in" : "New business? Create one",
+        onclick: function () { showAuthScreen("", mode === "create" ? "login" : "create"); } })
+    ].filter(Boolean)));
     // Focus straight away: a delayed focus could jump mid-typing
     var firstInput = form.querySelector("input");
     if (firstInput) firstInput.focus();
@@ -564,7 +588,94 @@
 
   function onAuthChanged(profile, error) {
     if (profile) {
+      var first = !state.user;
       state.user = profile;
+      if (first) watchBusiness();
+      planGate(function () { if (state.user === profile) openDashboard(profile); });
+    } else {
+      state.user = null;
+      state.business = null;
+      if (state.businessUnsub) { state.businessUnsub(); state.businessUnsub = null; }
+      stopSync();
+      closeModal();
+      showAuthScreen(error ? SC.friendlyError(error) : "");
+    }
+  }
+
+  /* ---------------- business and subscription ----------------
+   * Subscriptions are bought in the iPhone or Android app; the dashboard
+   * reads the status those phones record on the business. */
+  function watchBusiness() {
+    if (state.businessUnsub) state.businessUnsub();
+    state.businessUnsub = SC.onBusiness(function (info) {
+      state.business = info;
+      if (state.businessWaiters) { state.businessWaiters.forEach(function (f) { f(info); }); state.businessWaiters = null; }
+      if (state.page === "staff" && $("#bizBar")) renderBizBar($("#bizBar"));
+    });
+  }
+  function businessInfo(ms) {
+    if (state.business) return Promise.resolve(state.business);
+    return new Promise(function (resolve) {
+      (state.businessWaiters = state.businessWaiters || []).push(resolve);
+      setTimeout(function () { resolve(state.business); }, ms);
+    });
+  }
+  async function planGate(proceed) {
+    if (!SC.planNeeded() || SC.planActive(await businessInfo(8000))) return proceed();
+    var root = $("#authRoot");
+    root.dataset.mode = "paywall";
+    root.innerHTML = "";
+    root.hidden = false;
+    document.body.classList.add("signed-out");
+    var errorBox = el("div", { class: "form-error", role: "alert" });
+    root.appendChild(el("div", { class: "auth-card" }, [
+      el("div", { class: "auth-brand" }, [el("div", { class: "glyph", html: '<img src="app-icon.png" alt="">' }), el("h1", { text: (state.business && state.business.name) || "The H Stock Management" })]),
+      el("p", { class: "auth-sub", text: isAdmin()
+        ? "Your business's subscription isn't active. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there. Then come back and choose Check again."
+        : "Your business's subscription isn't active. Ask your manager to renew it in the app." }),
+      state.newBusinessCode ? codeNote(state.newBusinessCode) : null,
+      errorBox,
+      el("button", { type: "button", class: "btn btn-primary btn-block", text: "Check again", onclick: function () {
+        if (SC.planActive(state.business)) proceed(); else errorBox.textContent = "No active subscription found yet.";
+      } }),
+      el("button", { type: "button", class: "btn btn-secondary btn-block", style: "margin-top:8px", text: "Sign out", onclick: function () { SC.signOut(); } })
+    ].filter(Boolean)));
+  }
+  function showNewBusinessCode(code) {
+    formModal({ title: "Your business is ready", text: "Next: upload your product list on Stock check, and add your staff on the Staff page.", fields: [], submitLabel: "OK",
+      onSubmit: async function () {}, extra: codeNote(code) });
+  }
+  function codeNote(code) {
+    return el("div", { class: "code-note" }, [
+      el("span", { text: "Your business code" }), el("b", { class: "mono", text: code }),
+      el("small", { text: "Staff type this code when they sign in. It's also on the Staff page." })
+    ]);
+  }
+  // Business name and code, shown on the Staff page
+  function renderBizBar(bar) {
+    bar.innerHTML = "";
+    var b = state.business;
+    if (!b) return;
+    if (b.missing) {
+      bar.appendChild(el("div", { class: "note grow", text: "Give your business a code: staff type it, with their username and password, when they sign in on a new phone. People already signed in aren't affected." }));
+      bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", text: "Get a business code", onclick: function () {
+        formModal({ title: "Get a business code", fields: [{ name: "name", label: "Business name", autocomplete: "organization" }], submitLabel: "Create code",
+          onSubmit: async function (v) { toast("Business code: " + await SC.claimCode(v.name)); } });
+      } }));
+      return;
+    }
+    bar.appendChild(el("div", { class: "note grow" }, [
+      el("span", { text: b.name + " \u00b7 business code " }), el("b", { class: "mono biz-code", text: b.code }),
+      el("span", { text: " \u2014 staff type it when they sign in." })
+    ]));
+    bar.appendChild(el("button", { class: "btn btn-secondary", type: "button", text: "Rename", onclick: function () {
+      formModal({ title: "Rename business", fields: [{ name: "name", label: "Business name", autocomplete: "organization", value: b.name }], submitLabel: "Save",
+        onSubmit: async function (v) { await SC.renameBusiness(v.name); toast("Business renamed"); } });
+    } }));
+  }
+
+  function openDashboard(profile) {
+    {
       $("#authRoot").hidden = true;
       $("#authRoot").innerHTML = "";
       document.body.classList.remove("signed-out");
@@ -576,11 +687,7 @@
       // Also runs when an admin changes this person's role: drop them off admin-only pages
       var page = PAGES.filter(function (p) { return p.id === state.page; })[0];
       go(page && (!page.admin || isAdmin()) ? state.page : "overview");
-    } else {
-      state.user = null;
-      stopSync();
-      closeModal();
-      showAuthScreen(error ? SC.friendlyError(error) : "");
+      if (state.newBusinessCode) { showNewBusinessCode(state.newBusinessCode); state.newBusinessCode = ""; }
     }
   }
 
@@ -2058,6 +2165,9 @@
   }
 
   function renderStaff(root) {
+    var bizBar = el("div", { class: "toolbar", id: "bizBar" });
+    renderBizBar(bizBar);
+    root.appendChild(bizBar);
     root.appendChild(el("div", { class: "toolbar" }, [
       el("div", { class: "note grow", text: "Staff sign in on the phone app or here with the username and password you give them. Admins can also manage staff and start stock checks." }),
       el("button", { class: "btn btn-primary", type: "button", html: ICONS.plus + " Add staff member", onclick: addStaffModal })
@@ -2287,6 +2397,7 @@
     var overlay = el("div", { class: "modal-overlay", id: "modalOverlay" });
     var form = el("form", { class: "modal" }, [el("h3", { text: opts.title })]);
     if (opts.text) form.appendChild(el("p", { text: opts.text }));
+    if (opts.extra) form.appendChild(opts.extra);
     var inputs = {};
     (opts.fields || []).forEach(function (f) {
       var input = f.type === "select"
@@ -2318,18 +2429,21 @@
 
   function accountMenu() {
     closeModal();
+    var biz = state.business;
+    var owner = biz && !biz.missing && biz.id !== "root" && biz.ownerUid === state.user.uid;
     var overlay = el("div", { class: "modal-overlay", id: "modalOverlay" });
     function item(label, fn, cls) { return el("button", { type: "button", class: "btn btn-block " + (cls || "btn-secondary"), text: label, onclick: fn }); }
     var modal = el("div", { class: "modal" }, [
       el("h3", { text: state.user.name }),
       el("p", { text: "@" + state.user.username + " · " + (isAdmin() ? "Admin" : "Staff") }),
+      biz && !biz.missing ? el("p", {}, [el("span", { text: biz.name + " \u00b7 business code " }), el("b", { class: "mono biz-code", text: biz.code })]) : null,
       el("div", { style: "display:flex;flex-direction:column;gap:8px" }, [
         item("Change password", changePassword),
         item("Sign out", async function () { closeModal(); await SC.signOut(); }),
-        item("Delete my account", deleteAccount, "btn-danger"),
+        owner ? item("Delete business", deleteBusiness, "btn-danger") : item("Delete my account", deleteAccount, "btn-danger"),
         item("Close", closeModal)
       ])
-    ]);
+    ].filter(Boolean));
     overlay.addEventListener("mousedown", function (e) { if (e.target === overlay) closeModal(); });
     overlay.appendChild(modal);
     $("#modalRoot").appendChild(overlay);
@@ -2349,6 +2463,17 @@
         await SC.changeOwnPassword(v.current, v.next);
         toast("Password changed");
       }
+    });
+  }
+
+  function deleteBusiness() {
+    formModal({
+      title: "Delete business",
+      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone. Cancel the subscription separately in the App Store or Google Play. Enter your password to confirm.",
+      fields: [{ name: "password", label: "Password", type: "password", autocomplete: "current-password" }],
+      submitLabel: "Delete business",
+      danger: true,
+      onSubmit: async function (v) { await SC.deleteBusiness(v.password); }
     });
   }
 

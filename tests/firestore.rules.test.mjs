@@ -141,6 +141,106 @@ await t('admin cannot delete activity', assertFails(deleteDoc(doc(alice, 'activi
 await t('staff deletes own username+user', assertSucceeds((() => { const b = writeBatch(bob); b.delete(doc(bob, 'usernames/bob')); b.delete(doc(bob, 'users/bob')); return b.commit(); })()));
 await t('other paths denied', assertFails(setDoc(doc(alice, 'random/x'), { a: 1 })));
 
+// --- businesses: each one is separate ---
+const olga = env.authenticatedContext('olga').firestore();   // owner of business B1
+const sam = env.authenticatedContext('sam').firestore();     // staff in B1
+const pete = env.authenticatedContext('pete').firestore();   // owner of business B2
+const B1 = 'businesses/B1/', B2 = 'businesses/B2/';
+function createBusiness(c, uid, biz, code, extra) {
+  const b = writeBatch(c);
+  b.set(doc(c, 'businesses/' + biz), Object.assign({ name: 'Shop ' + biz, code, ownerUid: uid, createdAt: 'x' }, extra || {}));
+  b.set(doc(c, 'codes/' + code), { biz });
+  b.set(doc(c, 'members/' + uid), { biz });
+  b.set(doc(c, 'businesses/' + biz + '/users/' + uid), { username: uid, name: uid, role: 'admin', active: true });
+  b.set(doc(c, 'businesses/' + biz + '/usernames/' + uid), { uid, email: uid + '@x.com' });
+  b.set(doc(c, 'businesses/' + biz + '/meta/setup'), { done: true, by: uid });
+  return b.commit();
+}
+await t('owner creates business B1', assertSucceeds(createBusiness(olga, 'olga', 'B1', 'AAAAAA')));
+await t('owner creates business B2', assertSucceeds(createBusiness(pete, 'pete', 'B2', 'BBBBBB')));
+await t('cannot take over an existing business', assertFails(createBusiness(eve, 'eve', 'B1', 'CCCCCC')));
+await t('cannot reuse a business code', assertFails(createBusiness(eve, 'eve', 'B3', 'AAAAAA')));
+await t('business needs a well-formed code', assertFails(createBusiness(eve, 'eve', 'B4', 'bad')));
+await t('cannot create a business owned by someone else', assertFails((() => {
+  const b = writeBatch(eve);
+  b.set(doc(eve, 'businesses/B5'), { name: 'X', code: 'DDDDDD', ownerUid: 'olga' });
+  b.set(doc(eve, 'codes/DDDDDD'), { biz: 'B5' });
+  b.set(doc(eve, 'businesses/B5/users/eve'), { username: 'eve', name: 'E', role: 'admin', active: true });
+  return b.commit(); })()));
+await t('anyone looks up a business code', assertSucceeds(getDoc(doc(anon, 'codes/AAAAAA'))));
+await t('codes cannot be listed', assertFails(getDocs(collection(anon, 'codes'))));
+await t('anyone looks up a username in a business', assertSucceeds(getDoc(doc(anon, B1 + 'usernames/olga'))));
+await t('business usernames cannot be listed', assertFails(getDocs(collection(anon, B1 + 'usernames'))));
+await t('owner reads own business', assertSucceeds(getDoc(doc(olga, 'businesses/B1'))));
+await t('other owner cannot read the business', assertFails(getDoc(doc(pete, 'businesses/B1'))));
+await t('root admin cannot read a business', assertFails(getDoc(doc(alice, 'businesses/B1'))));
+await t('owner reads own member doc', assertSucceeds(getDoc(doc(olga, 'members/olga'))));
+await t('others cannot read a member doc', assertFails(getDoc(doc(pete, 'members/olga'))));
+
+// staff in B1
+{ const b = writeBatch(olga);
+  b.set(doc(olga, B1 + 'users/sam'), { username: 'sam', name: 'Sam', role: 'staff', active: true });
+  b.set(doc(olga, B1 + 'usernames/sam'), { uid: 'sam', email: 's@x.com' });
+  b.set(doc(olga, 'members/sam'), { biz: 'B1' });
+  await t('owner adds staff with member doc', assertSucceeds(b.commit())); }
+await t('other owner cannot add staff to B1', assertFails(setDoc(doc(pete, B1 + 'users/zed'), { username: 'zed', name: 'Z', role: 'admin', active: true })));
+await t('other owner cannot claim a member for B1', assertFails(setDoc(doc(pete, 'members/zed'), { biz: 'B1' })));
+await t('cannot claim a member without a user there', assertFails(setDoc(doc(olga, 'members/nobody'), { biz: 'B1' })));
+await t('member docs never point to root', assertFails(setDoc(doc(alice, 'members/zz'), { biz: 'root' })));
+await t('admin lists own members', assertSucceeds(getDocs(query(collection(olga, 'members'), where('biz', '==', 'B1')))));
+await t('admin cannot list another business members', assertFails(getDocs(query(collection(olga, 'members'), where('biz', '==', 'B2')))));
+
+// data stays inside each business
+await t('owner writes list in B1', assertSucceeds(setDoc(doc(olga, B1 + 'catalog/L_0'), { listId: 'L', n: 0, lines: '1\tA' })));
+await t('staff saves count in B1', assertSucceeds(setDoc(doc(sam, B1 + 'counts/1'), { barcode: '1', description: 'A', qty: 2, by: 'Sam', byUid: 'sam', at: 'x' })));
+await t('staff adds one to B1 total', assertSucceeds(setDoc(doc(sam, B1 + 'meta/stats'), { counted: 1 })));
+await t('staff reads B1 list', assertSucceeds(getDoc(doc(sam, B1 + 'catalog/L_0'))));
+await t('B2 owner cannot read B1 list', assertFails(getDoc(doc(pete, B1 + 'catalog/L_0'))));
+await t('B2 owner cannot read B1 counts', assertFails(getDocs(collection(pete, B1 + 'counts'))));
+await t('B2 owner cannot write B1 counts', assertFails(setDoc(doc(pete, B1 + 'counts/2'), { barcode: '2', qty: 1, byUid: 'pete' })));
+await t('root admin cannot read B1 counts', assertFails(getDocs(collection(alice, B1 + 'counts'))));
+await t('B1 staff cannot read root counts', assertFails(getDocs(collection(sam, 'counts'))));
+await t('B1 owner cannot read root list', assertFails(getDoc(doc(olga, 'catalog/L1_0'))));
+await t('B1 staff cannot read B1 activity', assertFails(getDocs(collection(sam, B1 + 'activity'))));
+await t('B1 staff logs in B1', assertSucceeds(addDoc(collection(sam, B1 + 'activity'), { at: serverTimestamp(), uid: 'sam', action: 'login' })));
+await t('B1 staff cannot log in B2', assertFails(addDoc(collection(sam, B2 + 'activity'), { at: serverTimestamp(), uid: 'sam', action: 'login' })));
+await t('no data under businesses/root', assertFails(setDoc(doc(alice, 'businesses/root/counts/1'), { barcode: '1', qty: 1, byUid: 'alice' })));
+await t('staff cannot promote self in B1', assertFails(updateDoc(doc(sam, B1 + 'users/sam'), { role: 'admin' })));
+
+// business doc: name, code, owner, subscription status
+await t('owner renames business', assertSucceeds(updateDoc(doc(olga, 'businesses/B1'), { name: 'Olga Shop' })));
+await t('code never changes', assertFails(updateDoc(doc(olga, 'businesses/B1'), { code: 'EEEEEE' })));
+await t('owner never changes', assertFails(updateDoc(doc(olga, 'businesses/B1'), { ownerUid: 'sam' })));
+await t('staff cannot rename business', assertFails(updateDoc(doc(sam, 'businesses/B1'), { name: 'Mine' })));
+await t('staff device records subscription', assertSucceeds(updateDoc(doc(sam, 'businesses/B1'), { plan: { active: true, expiresAt: 'x' } })));
+await t('other business cannot touch subscription', assertFails(updateDoc(doc(pete, 'businesses/B1'), { plan: { active: true } })));
+
+// the first business gets a code too
+{ const b = writeBatch(alice);
+  b.set(doc(alice, 'businesses/root'), { name: 'H Stock', code: 'HHHHHH', ownerUid: 'alice' });
+  b.set(doc(alice, 'codes/HHHHHH'), { biz: 'root' });
+  await t('root admin gives the first business a code', assertSucceeds(b.commit())); }
+await t('B1 owner cannot claim a code for root', assertFails(setDoc(doc(olga, 'codes/JJJJJJ'), { biz: 'root' })));
+await t('root admin reads root business', assertSucceeds(getDoc(doc(alice, 'businesses/root'))));
+
+// deleting a business (owner only)
+await t('staff cannot delete the business', assertFails(deleteDoc(doc(sam, 'businesses/B1'))));
+await t('other owner cannot delete B1', assertFails(deleteDoc(doc(pete, 'businesses/B1'))));
+const b1act = (await env.withSecurityRulesDisabled(async c => (await getDocs(collection(c.firestore(), B1 + 'activity'))).docs[0].id));
+await t('staff cannot delete B1 activity', assertFails(deleteDoc(doc(sam, B1 + 'activity/' + b1act))));
+await t('owner deletes B1 activity', assertSucceeds(deleteDoc(doc(olga, B1 + 'activity/' + b1act))));
+await t('root admin still cannot delete root activity', assertFails(deleteDoc(doc(alice, 'activity/' + act))));
+await t('owner deletes B1 data', assertSucceeds((() => { const b = writeBatch(olga);
+  b.delete(doc(olga, B1 + 'catalog/L_0')); b.delete(doc(olga, B1 + 'counts/1')); b.delete(doc(olga, B1 + 'meta/stats'));
+  b.delete(doc(olga, B1 + 'users/sam')); b.delete(doc(olga, B1 + 'usernames/sam')); b.delete(doc(olga, 'members/sam'));
+  return b.commit(); })()));
+await t('owner deletes the business last', assertSucceeds((() => { const b = writeBatch(olga);
+  b.delete(doc(olga, B1 + 'meta/setup')); b.delete(doc(olga, 'codes/AAAAAA'));
+  b.delete(doc(olga, B1 + 'usernames/olga')); b.delete(doc(olga, 'members/olga'));
+  b.delete(doc(olga, 'businesses/B1')); b.delete(doc(olga, B1 + 'users/olga'));
+  return b.commit(); })()));
+await t('B2 untouched', assertSucceeds(getDoc(doc(pete, 'businesses/B2'))));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 await env.cleanup();
 process.exit(fail ? 1 : 0);

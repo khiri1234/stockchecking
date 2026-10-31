@@ -18,6 +18,43 @@
   var profile = null; // { uid, username, name, role, active }
   var authCb = null, holdAuth = false, profileUnsub = null;
 
+  /* In-app subscriptions (RevenueCat: app.revenuecat.com > Project > API keys).
+   * Paste the public Apple and Google keys. While both are empty, nobody is
+   * asked to subscribe. The first business (the one set up before businesses
+   * existed) never needs a subscription. */
+  var SUBSCRIPTIONS = {
+    appleApiKey: "",
+    googleApiKey: "",
+    entitlement: "full_access"
+  };
+
+  /* ---------------- businesses ----------------
+   * Each business has its own copy of every collection. The first business
+   * keeps its data at the top level ("root"); each one created since lives
+   * under businesses/{biz}/. D() and C() give a document or collection of the
+   * signed-in person's business. */
+  var biz = "root";
+  var bizUnsub = null, bizInfo = null, bizListeners = [];
+  function base() { return biz === "root" ? "" : "businesses/" + biz + "/"; }
+  function D(path) { return db.doc(base() + path); }
+  function C(path) { return db.collection(base() + path); }
+  // What the pages use as their database: paths inside the current business
+  var scopedDb = {
+    doc: function (path) { return D(path); },
+    collection: function (path) { return C(path); },
+    batch: function () { return db.batch(); }
+  };
+  function setBiz(b) {
+    if (b === biz) return;
+    biz = b || "root";
+    catalogCache.listId = null; catalogCache.promise = null;
+    stopBusiness();
+  }
+
+  function lsGet(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function lsSet(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {} }
+  var CODE_KEY = "sc-business-code";
+
   function isNative() {
     var C = window.Capacitor;
     return !!(C && C.isNativePlatform && C.isNativePlatform());
@@ -49,7 +86,7 @@
   }
 
   async function init() {
-    if (db) return { db: db, auth: auth };
+    if (db) return { db: scopedDb, auth: auth };
     if (!configured()) return null;
     if (!firebase.apps.length) firebase.initializeApp(appConfig());
     auth = firebase.auth();
@@ -60,7 +97,7 @@
       try { await db.enablePersistence({ synchronizeTabs: true }); } catch (e) {}
       checkRestoredWrites();
     }
-    return { db: db, auth: auth };
+    return { db: scopedDb, auth: auth };
   }
 
   /* ---------------- usernames ---------------- */
@@ -106,13 +143,19 @@
       "permission-denied": "You don't have permission to do that.",
       "setup-done": "Setup has already been completed. Sign in instead.",
       "last-admin": "You're the only admin. Make someone else an admin first.",
-      "list-incomplete": "The product list didn't load completely. Check your connection and reopen the app."
+      "list-incomplete": "The product list didn't load completely. Check your connection and reopen the app.",
+      "bad-code": "That business code wasn't found. Check it with your manager.",
+      "bad-business-name": "Enter your business name (up to 80 characters).",
+      "bad-name": "Enter your name.",
+      "cancelled": "Purchase cancelled.",
+      "no-plans": "Subscriptions aren't available right now. Try again later.",
+      "store-unavailable": "Subscriptions can only be bought in the iPhone or Android app."
     };
     return map[code] || (e && e.message) || "Something went wrong.";
   }
 
   async function lookupUsername(username) {
-    var snap = await db.doc("usernames/" + username).get();
+    var snap = await D("usernames/" + username).get();
     return snap.exists ? snap.data() : null;
   }
 
@@ -139,7 +182,7 @@
       name: profile.name,
       action: action
     }, data || {}));
-    return db.collection("activity").add(entry).catch(function (e) {
+    return C("activity").add(entry).catch(function (e) {
       console.warn("activity log failed", action, e);
     });
   }
@@ -171,7 +214,8 @@
     area_deleted: "Deleted area",
     area_merged: "Moved counts to an area",
     task_assigned: "Assigned a task",
-    task_done: "Finished a task"
+    task_done: "Finished a task",
+    subscribed: "Started the subscription"
   };
 
   /* ---------------- stock data ----------------
@@ -238,7 +282,7 @@
     catalogCache.listId = session.listId;
     catalogCache.promise = (async function () {
       var n = session.listChunks || 0, reads = [];
-      for (var i = 0; i < n; i++) reads.push(db.doc("catalog/" + session.listId + "_" + i).get());
+      for (var i = 0; i < n; i++) reads.push(D("catalog/" + session.listId + "_" + i).get());
       var snaps = await Promise.all(reads);
       var items = {}, order = [];
       snaps.forEach(function (snap) {
@@ -297,7 +341,7 @@
   // The item's count, or null if it has none. Without signal it falls back to
   // the copy on this device; if there is none it throws code "unavailable".
   async function getCount(id) {
-    var ref = db.doc("counts/" + id);
+    var ref = D("counts/" + id);
     try {
       var snap = await withTimeout(ref.get(), 4000);
       return snap.exists ? snap.data() : null;
@@ -338,7 +382,7 @@
       var batch = db.batch();
       ids.slice(i, i + 400).forEach(function (id) {
         var sum = countParts(counts[id]).reduce(function (t, x) { return t + (x.qty || 0); }, 0);
-        batch.update(db.doc("counts/" + id), { qty: Math.max(0, sum) });
+        batch.update(D("counts/" + id), { qty: Math.max(0, sum) });
       });
       await batch.commit();
     }
@@ -367,11 +411,11 @@
     var now = new Date().toISOString(), parts = {};
     parts[newPartId()] = part(qty, now);
     var batch = db.batch();
-    batch.set(db.doc("counts/" + item.id), {
+    batch.set(D("counts/" + item.id), {
       barcode: item.barcode, description: item.description || "", qty: qty,
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     });
-    if (!before) batch.set(db.doc("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
+    if (!before) batch.set(D("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
     var res = await track(batch.commit());
     log("count_saved", { barcode: item.barcode, description: item.description || "", qty: qty, prevQty: before ? before.qty : null });
     return res;
@@ -390,17 +434,17 @@
     // matches the parts and an admin's dashboard puts it right (fixCountTotals)
     parts[partId || newPartId()] = part(partId ? inc(n) : n, now);
     var batch = db.batch();
-    batch.set(db.doc("counts/" + item.id), {
+    batch.set(D("counts/" + item.id), {
       barcode: item.barcode, description: item.description || "", qty: inc(n),
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     }, { merge: true });
-    if (!before) batch.set(db.doc("meta/stats"), { counted: inc(1) }, { merge: true });
+    if (!before) batch.set(D("meta/stats"), { counted: inc(1) }, { merge: true });
     return track(batch.commit());
   }
 
   // Deletes every document in a collection, 400 per batch; returns how many
   async function deleteAll(collection, onProgress) {
-    var snap = await db.collection(collection).get();
+    var snap = await C(collection).get();
     for (var i = 0; i < snap.docs.length; i += 400) {
       var batch = db.batch();
       snap.docs.slice(i, i + 400).forEach(function (d) { batch.delete(d.ref); });
@@ -413,7 +457,7 @@
   // Removes every stored list except keepListId (the one just uploaded, if any).
   // Lists are only a few documents each, so reading them all is cheap.
   async function deleteCatalog(keepListId) {
-    var snap = await db.collection("catalog").get();
+    var snap = await C("catalog").get();
     var old = snap.docs.filter(function (d) { return !keepListId || d.data().listId !== keepListId; });
     for (var i = 0; i < old.length; i += 400) {
       var batch = db.batch();
@@ -423,7 +467,7 @@
   }
 
   async function fetchAllCounts() {
-    var snap = await db.collection("counts").get();
+    var snap = await C("counts").get();
     var map = {};
     snap.docs.forEach(function (d) { map[d.id] = d.data(); });
     return map;
@@ -439,7 +483,7 @@
     var chunks = buildChunks(rows);
     for (var i = 0; i < chunks.length; i++) {
       say("Uploading list (" + (i + 1) + " of " + chunks.length + ")…");
-      await db.doc("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
+      await D("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
     }
     say("Clearing old counts…");
     await deleteAll("counts");
@@ -447,8 +491,8 @@
     await deleteAll("recounts");
     await deleteAll("tasks"); // tasks belong to one stock check; areas stay
     await deleteAll("products"); // lists saved before this format
-    await db.doc("meta/stats").set({ counted: 0 });
-    await db.doc("meta/session").set({
+    await D("meta/stats").set({ counted: 0 });
+    await D("meta/session").set({
       name: String(fileName || "Stock check").replace(/\.[^.]+$/, ""), sourceFileName: fileName || "",
       totalProducts: rows.length, startedAt: new Date().toISOString(), startedBy: profile.name,
       listId: listId, listChunks: chunks.length
@@ -465,7 +509,7 @@
   // products/ documents stay until the next import or delete clears them.
   async function migrateLegacyList(session) {
     if (!session || session.listId) return false;
-    var snap = await db.collection("products").get();
+    var snap = await C("products").get();
     var rows = [], counted = [];
     snap.docs.forEach(function (d) {
       var p = d.data();
@@ -476,20 +520,20 @@
     var listId = "legacy";
     var chunks = buildChunks(rows);
     for (var i = 0; i < chunks.length; i++) {
-      await db.doc("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
+      await D("catalog/" + listId + "_" + i).set({ listId: listId, n: i, lines: chunks[i] });
     }
     for (var j = 0; j < counted.length; j += 400) {
       var batch = db.batch();
       counted.slice(j, j + 400).forEach(function (c) {
-        batch.set(db.doc("counts/" + c.id), {
+        batch.set(D("counts/" + c.id), {
           barcode: c.p.barcode || c.id, description: c.p.description || "", qty: c.p.countedQty,
           by: c.p.updatedBy || "", byUid: c.p.updatedByUid || profile.uid, at: c.p.updatedAt || new Date().toISOString()
         });
       });
       await batch.commit();
     }
-    await db.doc("meta/stats").set({ counted: counted.length });
-    await db.doc("meta/session").set({ listId: listId, listChunks: chunks.length, totalProducts: rows.length }, { merge: true });
+    await D("meta/stats").set({ counted: counted.length });
+    await D("meta/session").set({ listId: listId, listChunks: chunks.length, totalProducts: rows.length }, { merge: true });
     return true;
   }
 
@@ -505,7 +549,7 @@
     for (var i = 0; i < items.length; i += 400) {
       var batch = db.batch();
       items.slice(i, i + 400).forEach(function (it) {
-        batch.set(db.doc("recounts/" + it.id), {
+        batch.set(D("recounts/" + it.id), {
           barcode: it.barcode, description: it.description || "", status: "open",
           requestedBy: profile.name, requestedByUid: profile.uid, requestedAt: now,
           firstQty: it.count.qty, firstBy: it.count.by || "", firstByUid: it.count.byUid || "", firstAt: it.count.at || ""
@@ -520,7 +564,7 @@
   }
 
   async function saveRecount(id, rec, qty) {
-    await track(db.doc("recounts/" + id).update({
+    await track(D("recounts/" + id).update({
       status: "done", recountQty: qty, recountBy: profile.name, recountByUid: profile.uid, recountAt: new Date().toISOString()
     }));
     log("recount_saved", { barcode: rec.barcode, description: rec.description || "", qty: qty });
@@ -530,12 +574,12 @@
   async function resolveRecount(id, rec, useRecount) {
     var batch = db.batch();
     if (useRecount) {
-      batch.set(db.doc("counts/" + id), {
+      batch.set(D("counts/" + id), {
         barcode: rec.barcode, description: rec.description || "", qty: rec.recountQty,
         by: rec.recountBy || "", byUid: rec.recountByUid || profile.uid, at: rec.recountAt || new Date().toISOString()
       });
     }
-    batch.delete(db.doc("recounts/" + id));
+    batch.delete(D("recounts/" + id));
     await batch.commit();
     await log(useRecount ? "recount_accepted" : "recount_kept", {
       barcode: rec.barcode, description: rec.description || "",
@@ -543,7 +587,7 @@
     });
   }
 
-  async function cancelRecount(id) { await db.doc("recounts/" + id).delete(); }
+  async function cancelRecount(id) { await D("recounts/" + id).delete(); }
 
   /* ---------------- areas and tasks ----------------
    * areas/{id} = { name, order }: places counted separately ("Aisle 3",
@@ -554,12 +598,12 @@
   async function saveArea(name, id) {
     name = String(name || "").trim();
     if (!name) throw err("bad-name", "Enter a name for the area.");
-    if (id) await db.doc("areas/" + id).update({ name: name });
-    else await db.collection("areas").add({ name: name, order: Date.now(), createdAt: new Date().toISOString(), createdBy: profile.name });
+    if (id) await D("areas/" + id).update({ name: name });
+    else await C("areas").add({ name: name, order: Date.now(), createdAt: new Date().toISOString(), createdBy: profile.name });
     log(id ? "area_renamed" : "area_added", { detail: name });
   }
   async function deleteArea(id, name) {
-    await db.doc("areas/" + id).delete();
+    await D("areas/" + id).delete();
     log("area_deleted", { detail: name || "" });
   }
 
@@ -574,7 +618,7 @@
     for (var i = 0; i < ids.length; i += 400) {
       var batch = db.batch();
       ids.slice(i, i + 400).forEach(function (id) {
-        var c = counts[id], ref = db.doc("counts/" + id);
+        var c = counts[id], ref = D("counts/" + id);
         if (!c.parts || typeof c.parts !== "object") {
           batch.update(ref, { parts: { all: { qty: c.qty, by: c.by || "", byUid: c.byUid || "", at: c.at || "", area: area.id, areaName: area.name } } });
           return;
@@ -596,23 +640,23 @@
   // t: { uid, name, areaId, areaName, items: [barcodeId] or null, note }
   async function createTask(t) {
     var items = (t.items || []).slice(0, MAX_TASK_ITEMS);
-    await db.collection("tasks").add({
+    await C("tasks").add({
       uid: t.uid, name: t.name || "", areaId: t.areaId || "", areaName: t.areaName || "",
       items: items, itemCount: items.length, note: String(t.note || "").trim(), done: false,
       createdAt: new Date().toISOString(), createdBy: profile.name
     });
     log("task_assigned", { target: t.username || "", detail: [t.areaName, items.length ? plural(items.length, "item") : ""].filter(Boolean).join(" \u00b7 ") });
   }
-  async function deleteTask(id) { await db.doc("tasks/" + id).delete(); }
+  async function deleteTask(id) { await D("tasks/" + id).delete(); }
   async function setTaskDone(task, done) {
-    await track(db.doc("tasks/" + task.id).update({ done: !!done, doneAt: done ? new Date().toISOString() : "" }));
+    await track(D("tasks/" + task.id).update({ done: !!done, doneAt: done ? new Date().toISOString() : "" }));
     if (done) log("task_done", { detail: [task.areaName, task.itemCount ? plural(task.itemCount, "item") : ""].filter(Boolean).join(" \u00b7 ") });
   }
 
   async function resetCounts(onProgress) {
     var n = await deleteAll("counts", onProgress);
     await deleteAll("recounts");
-    await db.doc("meta/stats").set({ counted: 0 });
+    await D("meta/stats").set({ counted: 0 });
     await log("reset_counts", { detail: plural(n, "item") });
     return n;
   }
@@ -627,8 +671,8 @@
     await deleteAll("recounts");
     await deleteAll("tasks");
     out.products += await deleteAll("products");
-    await db.doc("meta/session").delete();
-    await db.doc("meta/stats").delete();
+    await D("meta/session").delete();
+    await D("meta/stats").delete();
     await log("stock_deleted", { detail: plural(out.products, "product") + " · " + plural(out.extras, "extra item") });
     return out;
   }
@@ -636,7 +680,7 @@
   /* ---------------- sessions ---------------- */
 
   async function loadProfile(uid) {
-    var snap = await db.doc("users/" + uid).get();
+    var snap = await D("users/" + uid).get();
     if (!snap.exists) return null;
     return Object.assign({ uid: uid }, snap.data());
   }
@@ -664,7 +708,7 @@
   // off or changing its role takes effect straight away on every device.
   function watchProfile(uid) {
     if (profileUnsub) profileUnsub();
-    profileUnsub = listen(db.doc("users/" + uid), function (snap) {
+    profileUnsub = listen(D("users/" + uid), function (snap) {
       if (!profile || profile.uid !== uid) return;
       var d = snap.exists ? snap.data() : null;
       if (!d || !d.active) {
@@ -684,15 +728,43 @@
   // connection is up. Reading the account record can then fail for a moment;
   // that must not sign the person out. Falls back to the offline copy and
   // keeps retrying. Resolves null only when the record really doesn't exist.
+  // The business a sign-in account belongs to: members/{uid}, or the first
+  // business (no members document). Remembered on the device for offline starts.
+  async function bizForUid(uid) {
+    var key = "sc-biz-" + uid;
+    try {
+      var snap = await withTimeout(db.doc("members/" + uid).get(), 10000);
+      var b = snap.exists && snap.data().biz ? snap.data().biz : "root";
+      lsSet(key, b);
+      return b;
+    } catch (e) {
+      // Everyone may read their own members document, so a refusal means the
+      // database still has the rules from before businesses: the first business
+      if (e && e.code === "permission-denied") return "root";
+      if (e && e.code === "unauthenticated") throw e;
+      var saved = lsGet(key);
+      if (saved) return saved;
+      var cached = await db.doc("members/" + uid).get({ source: "cache" }).catch(function () { return null; });
+      if (cached) return cached.exists ? cached.data().biz : "root";
+      throw e;
+    }
+  }
+
   async function restoreProfile(u) {
     for (var attempt = 0; ; attempt++) {
-      try { return await withTimeout(loadProfile(u.uid), 10000); } catch (e) {
+      try {
+        setBiz(await bizForUid(u.uid));
+        var p = await withTimeout(loadProfile(u.uid), 10000);
+        // A members document that doesn't match an account there: the account is in the first business
+        if (!p && biz !== "root") { setBiz("root"); p = await withTimeout(loadProfile(u.uid), 10000); }
+        return p;
+      } catch (e) {
         // The server turned this sign-in down (account removed): not a connection problem
         if (e && (e.code === "permission-denied" || e.code === "unauthenticated")) return null;
         console.warn("profile load failed", e);
       }
       try {
-        var cached = await db.doc("users/" + u.uid).get({ source: "cache" });
+        var cached = await D("users/" + u.uid).get({ source: "cache" });
         if (cached.exists) return Object.assign({ uid: u.uid }, cached.data());
       } catch (e) {}
       if (auth.currentUser !== u) throw err("signed-out");
@@ -707,6 +779,7 @@
     return auth.onAuthStateChanged(async function (u) {
       if (holdAuth) return;
       if (!u) {
+        stopBusiness();
         if (profileUnsub) { profileUnsub(); profileUnsub = null; }
         profile = null; cb(null); return;
       }
@@ -727,7 +800,20 @@
     });
   }
 
-  async function signIn(rawUsername, password) {
+  function normalizeCode(raw) { return String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+  // The business a code belongs to; no code = the first business
+  async function bizForCode(code) {
+    if (!code) return "root";
+    var snap = await db.doc("codes/" + code).get();
+    return snap.exists ? snap.data().biz : null;
+  }
+
+  // rawCode: the business code (empty for the first business)
+  async function signIn(rawUsername, password, rawCode) {
+    var code = normalizeCode(rawCode);
+    var b = await withTimeout(bizForCode(code), 15000);
+    if (!b) throw err("bad-code");
+    setBiz(b);
     var username = normalizeUsername(rawUsername);
     var entry = validUsername(username) ? await withTimeout(lookupUsername(username), 15000) : null;
     if (!entry) throw err("auth/invalid-credential");
@@ -735,6 +821,8 @@
     var p = await withTimeout(loadProfile(cred.user.uid), 15000);
     if (!p || !p.active) { await auth.signOut(); throw err("inactive"); }
     profile = p;
+    lsSet(CODE_KEY, code);
+    lsSet("sc-biz-" + p.uid, biz);
     await log("login");
     // Open the app now instead of waiting for the sign-in listener to catch up
     watchProfile(p.uid);
@@ -744,6 +832,7 @@
 
   async function signOut() {
     await log("logout");
+    stopBusiness();
     if (profileUnsub) { profileUnsub(); profileUnsub = null; }
     profile = null;
     await auth.signOut();
@@ -753,6 +842,7 @@
   async function setupFirstAdmin(name, rawUsername, password) {
     var username = normalizeUsername(rawUsername);
     if (!validUsername(username)) throw err("bad-username");
+    setBiz("root");
     if (await isSetupDone()) throw err("setup-done");
     var email = newEmailFor(username);
     // The new account signs in before its admin record exists; hold the
@@ -764,9 +854,9 @@
     var uid = cred.user.uid;
     var now = firebase.firestore.FieldValue.serverTimestamp();
     var batch = db.batch();
-    batch.set(db.doc("users/" + uid), { username: username, name: name.trim(), role: "admin", active: true, createdAt: now, createdBy: uid });
-    batch.set(db.doc("usernames/" + username), { uid: uid, email: email });
-    batch.set(db.doc("meta/setup"), { done: true, by: uid, at: now });
+    batch.set(D("users/" + uid), { username: username, name: name.trim(), role: "admin", active: true, createdAt: now, createdBy: uid });
+    batch.set(D("usernames/" + username), { uid: uid, email: email });
+    batch.set(D("meta/setup"), { done: true, by: uid, at: now });
     try {
       await batch.commit();
     } catch (e) {
@@ -781,6 +871,251 @@
     watchProfile(uid);
     if (authCb) authCb(profile);
     return profile;
+  }
+
+  /* ---------------- creating a business ----------------
+   * Anyone can create a business: they become its owner and first admin, and
+   * get a business code their staff type when signing in. */
+
+  var CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O or 1/I
+  function newCode() {
+    var out = "", r = new Uint32Array(6);
+    (window.crypto || window.msCrypto).getRandomValues(r);
+    for (var i = 0; i < 6; i++) out += CODE_CHARS[r[i] % CODE_CHARS.length];
+    return out;
+  }
+
+  // opts: { businessName, name, username, password }
+  async function createBusiness(opts) {
+    var businessName = String(opts.businessName || "").trim();
+    var name = String(opts.name || "").trim();
+    var username = normalizeUsername(opts.username);
+    if (!businessName || businessName.length > 80) throw err("bad-business-name");
+    if (!name) throw err("bad-name");
+    if (!validUsername(username)) throw err("bad-username");
+    var bizId = db.collection("businesses").doc().id;
+    var email = newEmailFor(username);
+    holdAuth = true;
+    try {
+      var cred = await auth.createUserWithEmailAndPassword(email, opts.password);
+    } catch (e) { holdAuth = false; throw e; }
+    var uid = cred.user.uid, now = firebase.firestore.FieldValue.serverTimestamp(), code = null, lastErr = null;
+    setBiz(bizId);
+    // A new random code each try, in case one is already taken
+    for (var attempt = 0; attempt < 5 && !code; attempt++) {
+      var c = newCode(), batch = db.batch();
+      batch.set(db.doc("businesses/" + bizId), { name: businessName, code: c, ownerUid: uid, createdAt: now });
+      batch.set(db.doc("codes/" + c), { biz: bizId });
+      batch.set(db.doc("members/" + uid), { biz: bizId });
+      batch.set(D("users/" + uid), { username: username, name: name, role: "admin", active: true, createdAt: now, createdBy: uid });
+      batch.set(D("usernames/" + username), { uid: uid, email: email });
+      batch.set(D("meta/setup"), { done: true, by: uid, at: now });
+      try { await batch.commit(); code = c; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
+    }
+    if (!code) {
+      holdAuth = false;
+      setBiz("root");
+      await cred.user.delete().catch(function () { return auth.signOut(); });
+      throw lastErr || err("permission-denied");
+    }
+    holdAuth = false;
+    lsSet(CODE_KEY, code);
+    lsSet("sc-biz-" + uid, bizId);
+    profile = await loadProfile(uid);
+    await log("setup", { detail: businessName });
+    watchProfile(uid);
+    if (authCb) authCb(profile);
+    return { profile: profile, code: code };
+  }
+
+  /* ---------------- the business: name, code, subscription ---------------- */
+
+  function stopBusiness() {
+    if (bizUnsub) { bizUnsub(); bizUnsub = null; }
+    bizInfo = null;
+  }
+  function notifyBusiness() { bizListeners.forEach(function (f) { try { f(bizInfo); } catch (e) {} }); }
+  // cb(info) now and whenever it changes: { id, name, code, ownerUid, plan } or
+  // { id, missing: true } (the first business before an admin gives it a code)
+  function onBusiness(cb) {
+    bizListeners.push(cb);
+    if (bizInfo) cb(bizInfo);
+    if (!bizUnsub && db && profile) {
+      var id = biz;
+      bizUnsub = listen(db.doc("businesses/" + id), function (snap) {
+        if (id !== biz) return;
+        bizInfo = snap.exists ? Object.assign({ id: id }, snap.data()) : { id: id, missing: true };
+        notifyBusiness();
+      }, function () {});
+    }
+    return function () { bizListeners = bizListeners.filter(function (f) { return f !== cb; }); };
+  }
+
+  // Admins of the first business: give it a name and a business code
+  async function claimCode(name) {
+    name = String(name || "").trim();
+    if (!name || name.length > 80) throw err("bad-business-name");
+    for (var attempt = 0; attempt < 5; attempt++) {
+      var c = newCode(), batch = db.batch();
+      batch.set(db.doc("businesses/" + biz), { name: name, code: c, ownerUid: profile.uid, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+      batch.set(db.doc("codes/" + c), { biz: biz });
+      try { await batch.commit(); return c; } catch (e) { if (e.code !== "permission-denied") throw e; }
+    }
+    throw err("permission-denied");
+  }
+
+  async function renameBusiness(name) {
+    name = String(name || "").trim();
+    if (!name || name.length > 80) throw err("bad-business-name");
+    await db.doc("businesses/" + biz).update({ name: name });
+  }
+
+  function subscriptionsOn() { return !!(SUBSCRIPTIONS.appleApiKey || SUBSCRIPTIONS.googleApiKey); }
+  // Does this business need a subscription to use the app?
+  function planNeeded() { return subscriptionsOn() && biz !== "root"; }
+  // The subscription last recorded for the business (seen by any member's phone)
+  function planActive(info) {
+    var p = info && info.plan;
+    if (!p || !p.active) return false;
+    return !p.expiresAt || Date.parse(p.expiresAt) > Date.now();
+  }
+
+  /* In-app purchase (iOS and Android apps only), through RevenueCat. The
+   * RevenueCat customer is the business, so the subscription the owner buys
+   * is seen on every staff phone of the same business. */
+  var store = null, storeUser = null;
+  function storePlugin() {
+    var C = window.Capacitor;
+    if (!isNative() || !C.isPluginAvailable || !C.isPluginAvailable("Purchases")) return null;
+    return C.registerPlugin ? C.registerPlugin("Purchases") : (C.Plugins && C.Plugins.Purchases) || null;
+  }
+  function storeKey() {
+    var platform = window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "";
+    return platform === "ios" ? SUBSCRIPTIONS.appleApiKey : platform === "android" ? SUBSCRIPTIONS.googleApiKey : "";
+  }
+  function canBuy() { return !!(storePlugin() && storeKey()); }
+  async function storeReady() {
+    var plugin = storePlugin();
+    if (!plugin || !storeKey()) throw err("store-unavailable");
+    if (!store) {
+      await plugin.configure({ apiKey: storeKey(), appUserID: biz });
+      store = plugin; storeUser = biz;
+    } else if (storeUser !== biz) {
+      await store.logIn({ appUserID: biz });
+      storeUser = biz;
+    }
+    return store;
+  }
+  function planFrom(customerInfo) {
+    var active = customerInfo && customerInfo.entitlements && customerInfo.entitlements.active;
+    var e = active && active[SUBSCRIPTIONS.entitlement];
+    var plan = e
+      ? { active: true, expiresAt: e.expirationDate || "", productId: e.productIdentifier || "", store: e.store || "", willRenew: !!e.willRenew }
+      : { active: false };
+    plan.checkedAt = new Date().toISOString();
+    return plan;
+  }
+  // Records what the store said, so the dashboard and other devices see it
+  function recordPlan(plan) {
+    return db.doc("businesses/" + biz).update({ plan: plan }).catch(function (e) { console.warn("plan not recorded", e); });
+  }
+  async function checkPlan() {
+    var s = await storeReady();
+    var res = await withTimeout(s.getCustomerInfo(), 20000);
+    var plan = planFrom(res && res.customerInfo);
+    await recordPlan(plan);
+    return plan;
+  }
+  // -> [{ id, title, price, period, trial, pkg }] for the paywall
+  async function getPlans() {
+    var s = await storeReady();
+    var offerings = await withTimeout(s.getOfferings(), 20000);
+    var cur = offerings && offerings.current;
+    var pkgs = (cur && cur.availablePackages) || [];
+    if (!pkgs.length) throw err("no-plans");
+    return pkgs.map(function (p) {
+      var pr = p.product || {};
+      var intro = pr.introPrice;
+      return {
+        id: p.identifier, title: pr.title || p.identifier, price: pr.priceString || "",
+        period: p.packageType === "ANNUAL" ? "year" : p.packageType === "MONTHLY" ? "month" : (pr.subscriptionPeriod || ""),
+        trial: intro && intro.price === 0 ? (intro.periodNumberOfUnits + " " + String(intro.periodUnit || "").toLowerCase() + (intro.periodNumberOfUnits === 1 ? "" : "s")) : "",
+        pkg: p
+      };
+    });
+  }
+  function cancelled(e) {
+    return !!(e && (e.userCancelled || (e.data && e.data.userCancelled) || String(e.code) === "1" || /cancel/i.test(e.message || "")));
+  }
+  async function buyPlan(plan) {
+    var s = await storeReady();
+    var res;
+    try { res = await s.purchasePackage({ aPackage: plan.pkg }); } catch (e) { throw cancelled(e) ? err("cancelled") : e; }
+    var p = planFrom(res && res.customerInfo);
+    await recordPlan(p);
+    log("subscribed", { detail: plan.title + (plan.price ? " · " + plan.price : "") });
+    return p;
+  }
+  async function restorePlans() {
+    var s = await storeReady();
+    var res = await s.restorePurchases();
+    var p = planFrom(res && res.customerInfo);
+    await recordPlan(p);
+    return p;
+  }
+  function manageSubscriptionsUrl() {
+    var platform = window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "";
+    return platform === "android" ? "https://play.google.com/store/account/subscriptions" : "https://apps.apple.com/account/subscriptions";
+  }
+
+  /* ---------------- deleting a business (owner) ----------------
+   * Removes every document of the business, its staff accounts' records, its
+   * code and the owner's own sign-in account. Staff sign-in accounts are left
+   * without access. The subscription is cancelled in the App Store / Google
+   * Play, not here. */
+  async function deleteBusiness(password, onProgress) {
+    if (biz === "root") throw err("permission-denied");
+    var say = onProgress || function () {};
+    var u = await reauth(password);
+    var info = (await db.doc("businesses/" + biz).get()).data() || {};
+    if (info.ownerUid !== u.uid) throw err("permission-denied", "Only the person who created the business can delete it.");
+    var colls = ["catalog", "counts", "extras", "recounts", "tasks", "products", "areas", "activity"];
+    for (var i = 0; i < colls.length; i++) { say("Deleting " + colls[i] + "…"); await deleteAll(colls[i]); }
+    say("Deleting staff accounts…");
+    var users = await C("users").get();
+    var members = await db.collection("members").where("biz", "==", biz).get();
+    var refs = [], seen = {};
+    function add(ref) { if (!seen[ref.path]) { seen[ref.path] = true; refs.push(ref); } }
+    users.docs.forEach(function (d) {
+      if (d.id === u.uid) return;
+      add(d.ref);
+      var name = d.data().username;
+      if (name && name !== profile.username) add(D("usernames/" + name));
+    });
+    members.docs.forEach(function (d) { if (d.id !== u.uid) add(d.ref); });
+    for (var j = 0; j < refs.length; j += 400) {
+      var b = db.batch();
+      refs.slice(j, j + 400).forEach(function (r) { b.delete(r); });
+      await b.commit();
+    }
+    var meta = db.batch();
+    ["meta/stats", "meta/session"].forEach(function (m) { meta.delete(D(m)); });
+    await meta.commit();
+    say("Deleting the business…");
+    stopBusiness();
+    if (profileUnsub) { profileUnsub(); profileUnsub = null; }
+    var last = db.batch();
+    last.delete(D("meta/setup"));
+    if (info.code) last.delete(db.doc("codes/" + info.code));
+    last.delete(D("usernames/" + profile.username));
+    last.delete(db.doc("members/" + u.uid));
+    last.delete(db.doc("businesses/" + biz));
+    last.delete(D("users/" + u.uid));
+    await last.commit();
+    profile = null;
+    lsSet(CODE_KEY, "");
+    setBiz("root");
+    await u.delete();
   }
 
   /* ---------------- staff management (admins) ---------------- */
@@ -808,11 +1143,12 @@
     var email = newEmailFor(username);
     var uid = await createAuthAccount(email, opts.password);
     var batch = db.batch();
-    batch.set(db.doc("users/" + uid), {
+    batch.set(D("users/" + uid), {
       username: username, name: opts.name.trim(), role: opts.role === "admin" ? "admin" : "staff",
       active: true, createdAt: firebase.firestore.FieldValue.serverTimestamp(), createdBy: profile.uid
     });
-    batch.set(db.doc("usernames/" + username), { uid: uid, email: email });
+    batch.set(D("usernames/" + username), { uid: uid, email: email });
+    if (biz !== "root") batch.set(db.doc("members/" + uid), { biz: biz });
     await batch.commit();
     await log("staff_created", { target: username, detail: opts.role === "admin" ? "admin" : "staff" });
     return uid;
@@ -825,13 +1161,14 @@
     var email = newEmailFor(user.username);
     var newUid = await createAuthAccount(email, newPassword);
     var batch = db.batch();
-    batch.set(db.doc("users/" + newUid), {
+    batch.set(D("users/" + newUid), {
       username: user.username, name: user.name, role: user.role, active: true,
       createdAt: user.createdAt || firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: user.createdBy || profile.uid, previousUid: user.uid
     });
-    batch.update(db.doc("usernames/" + user.username), { uid: newUid, email: email });
-    batch.update(db.doc("users/" + user.uid), { active: false, replacedBy: newUid });
+    batch.update(D("usernames/" + user.username), { uid: newUid, email: email });
+    batch.update(D("users/" + user.uid), { active: false, replacedBy: newUid });
+    if (biz !== "root") batch.set(db.doc("members/" + newUid), { biz: biz });
     await batch.commit();
     await log("password_reset", { target: user.username });
     return newUid;
@@ -839,7 +1176,7 @@
 
   async function setActive(user, active) {
     if (user.uid === profile.uid) throw err("permission-denied", "You can't switch off your own account.");
-    await db.doc("users/" + user.uid).update({ active: !!active });
+    await D("users/" + user.uid).update({ active: !!active });
     await log(active ? "staff_reactivated" : "staff_deactivated", { target: user.username });
   }
 
@@ -848,7 +1185,7 @@
       var admins = (allUsers || []).filter(function (u) { return u.role === "admin" && u.active && !u.replacedBy; });
       if (admins.length <= 1) throw err("last-admin");
     }
-    await db.doc("users/" + user.uid).update({ role: role });
+    await D("users/" + user.uid).update({ role: role });
     await log("role_changed", { target: user.username, detail: role });
   }
 
@@ -873,8 +1210,9 @@
     await log("account_deleted");
     var batch = db.batch();
     var entry = await lookupUsername(profile.username);
-    if (entry && entry.uid === u.uid) batch.delete(db.doc("usernames/" + profile.username));
-    batch.delete(db.doc("users/" + u.uid));
+    if (entry && entry.uid === u.uid) batch.delete(D("usernames/" + profile.username));
+    batch.delete(D("users/" + u.uid));
+    if (biz !== "root") batch.delete(db.doc("members/" + u.uid));
     if (profileUnsub) { profileUnsub(); profileUnsub = null; }
     await batch.commit();
     profile = null;
@@ -931,12 +1269,28 @@
     changeOwnPassword: changeOwnPassword,
     deleteOwnAccount: deleteOwnAccount,
     log: log,
+    createBusiness: createBusiness,
+    onBusiness: onBusiness,
+    claimCode: claimCode,
+    renameBusiness: renameBusiness,
+    deleteBusiness: deleteBusiness,
+    businessId: function () { return biz; },
+    savedCode: function () { return lsGet(CODE_KEY); },
+    normalizeCode: normalizeCode,
+    planNeeded: planNeeded,
+    planActive: planActive,
+    canBuy: canBuy,
+    checkPlan: checkPlan,
+    getPlans: getPlans,
+    buyPlan: buyPlan,
+    restorePlans: restorePlans,
+    manageSubscriptionsUrl: manageSubscriptionsUrl,
     actionLabel: function (a) { return ACTION_LABELS[a] || a; },
     friendlyError: friendlyError,
     withTimeout: withTimeout,
     normalizeUsername: normalizeUsername,
     validUsername: validUsername,
     profile: function () { return profile; },
-    db: function () { return db; }
+    db: function () { return scopedDb; }
   };
 })();
