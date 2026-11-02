@@ -24,7 +24,7 @@
    * empty, nobody is asked to pay. The first business (the one set up before
    * businesses existed) never needs to. */
   var SUBSCRIPTIONS = {
-    appleApiKey: "",
+    appleApiKey: "appl_euZaRtUMrryzKnRXHiMCERXdYkF",
     googleApiKey: "",
     entitlement: "full_access",
     // Items a business can count for free before it has to buy
