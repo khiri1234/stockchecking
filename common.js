@@ -1258,6 +1258,43 @@
     await u.delete();
   }
 
+  /* ---------------- installable web app ----------------
+   * On the website (not inside the iPhone, Android or desktop apps), sw.js
+   * keeps a copy of the app so it can be installed and opens offline. */
+  var installPrompt = null;
+  function isInstalled() {
+    return !!((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone);
+  }
+  function webAppOk() {
+    var h = location.hostname;
+    return !isNative() && !isDesktopApp() && "serviceWorker" in navigator &&
+      (location.protocol === "https:" || h === "localhost" || h === "127.0.0.1");
+  }
+  if (typeof window !== "undefined" && webAppOk()) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js").catch(function (e) { console.warn("offline copy not set up", e); });
+    });
+    // Chrome / Edge / Android: keep the install prompt for the menu's "Install app"
+    window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installPrompt = e; });
+    window.addEventListener("appinstalled", function () { installPrompt = null; });
+  }
+  // How this browser installs apps: "prompt" (one tap), "ios" (Share > Add to
+  // Home Screen), "menu" (the browser's own menu), or "" (installed / not possible)
+  function installMethod() {
+    if (!webAppOk() || isInstalled()) return "";
+    if (installPrompt) return "prompt";
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) return "ios";
+    return "menu";
+  }
+  async function installApp() {
+    if (!installPrompt) return false;
+    var p = installPrompt;
+    installPrompt = null;
+    p.prompt();
+    var choice = await p.userChoice;
+    return !!(choice && choice.outcome === "accepted");
+  }
+
   window.SC = {
     config: FIREBASE_CONFIG,
     configured: configured,
@@ -1308,6 +1345,8 @@
     changeOwnPassword: changeOwnPassword,
     deleteOwnAccount: deleteOwnAccount,
     log: log,
+    installMethod: installMethod,
+    installApp: installApp,
     createBusiness: createBusiness,
     onBusiness: onBusiness,
     claimCode: claimCode,

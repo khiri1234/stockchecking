@@ -224,6 +224,25 @@ could change it for their own business. To make it tamper-proof later, add a
 RevenueCat webhook to a Cloud Function that writes `businesses/{biz}.plan` and
 drop client writes of `plan` from the rules.
 
+## Installable web app (browser)
+
+The website can be installed like an app from the browser, with its own icon
+and window, and it opens without signal:
+
+- Chrome / Edge (Windows, Mac, Android): the install icon in the address bar,
+  or the browser menu > **Install The H Stock Management**. Android: menu >
+  **Install app** / **Add to Home screen**.
+- iPhone / iPad: Safari > Share > **Add to Home Screen**.
+- In the app: account menu > **Install app** (shows the right steps for the
+  browser, or the install prompt where the browser offers one).
+
+`manifest.webmanifest` describes the app (name, icons in `icons/`, colours,
+shortcuts to Scan and Dashboard). `sw.js` keeps a copy of the app's own files
+(network first, so updates arrive straight away when online) and of the
+libraries it loads from CDNs; the database and sign-in are never cached by it
+(Firebase keeps offline counts itself). It only runs on the website, not inside
+the iPhone, Android or desktop apps. Icons: `node scripts/make-icons.js --web`.
+
 ## iPhone app (App Store)
 
 The `ios/` folder is a Capacitor Xcode project that wraps `index.html`. In the
