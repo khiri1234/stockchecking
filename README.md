@@ -189,20 +189,20 @@ nobody is asked to pay; fill them in to switch the purchase on. Setup:
 1. **App Store Connect** > your app > **Monetization > Subscriptions**: create
    a subscription group (reference name `The H Stock Management`, and an
    English display name), then a subscription in it: reference name `Monthly`,
-   product ID `hstock_monthly`, duration 1 month, price AED 4,000, English
+   product ID `hstock_month`, duration 1 month, price AED 4,000, English
    display name and description, and the review screenshot (the purchase
    screen). No introductory offer: the 50 free items are the trial. Sign the
    **Paid Apps Agreement** (Business section), create an **In-App Purchase
    key** for RevenueCat (Users and Access > Integrations > In-App Purchase),
    and set the app's own price to **Free**.
 2. **Google Play Console** > your app > **Monetize > Subscriptions**: create
-   `hstock_monthly` with a monthly base plan at the same price (Google may cap
+   `hstock_month` with a monthly base plan at the same price (Google may cap
    it lower). Link a Google Cloud service account for RevenueCat (RevenueCat's
    guide walks through it).
 3. **RevenueCat** (app.revenuecat.com, free to start): create a project, add
    the App Store app (bundle ID `com.khiri1234.stockcheck`, the In-App
    Purchase key) and the Play Store app. Create an **entitlement** with the
-   identifier `full_access`, attach `hstock_monthly` to it, and put it in the
+   identifier `full_access`, attach `hstock_month` to it, and put it in the
    **default offering** as a **Monthly** package. In Project settings, set
    **Restore behavior** to **Keep with original App User ID**, so a purchase
    stays with the business that bought it.
