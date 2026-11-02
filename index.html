@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>The H Stock Management</title>
 <link rel="icon" type="image/png" href="app-icon.png">
-<link rel="apple-touch-icon" href="resources/icon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- Installable web app (manifest.webmanifest, sw.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#EDEFF2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="H Stock">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -780,6 +786,9 @@
       card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Unlock the full version for your business: unlimited staff, products and stock checks, for your whole team. Staff phones don't need to buy it." }));
       var plansBox = el("div", { class: "menu-list", text: "Loading plans…" });
       card.appendChild(plansBox);
+      var loadPlans = function () {
+      errorBox.textContent = "";
+      plansBox.textContent = "Loading plans…";
       SC.getPlans().then(function (plans) {
         plansBox.innerHTML = "";
         var store = window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID";
@@ -801,7 +810,15 @@
           });
           plansBox.appendChild(b);
         });
-      }).catch(function (e) { plansBox.textContent = ""; errorBox.textContent = SC.friendlyError(e); });
+      }).catch(function (e) {
+        plansBox.textContent = "";
+        errorBox.textContent = SC.friendlyError(e);
+        var again = el("button", { type: "button", class: "btn btn-primary btn-block", text: "Try again" });
+        again.addEventListener("click", loadPlans);
+        plansBox.appendChild(again);
+      });
+      };
+      loadPlans();
       card.appendChild(errorBox);
       button("Restore purchases", async function () { afterCheck(await SC.restorePlans()); });
       var finePrint = el("p", { class: "fine-print" });
@@ -915,6 +932,8 @@
       if (SC.planActive(biz) && biz.plan.expiresAt) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
       else if (!SC.planActive(biz)) item("Unlock full version", function () { closeModal(); showPaywall(function () { hideAuthScreen(); }); });
     }
+    var how = SC.installMethod();
+    if (how) item("Install app", function () { installWebApp(how); });
     item("Change password", changePassword);
     item("Sign out", async function () { closeModal(); await SC.signOut(); });
     var owner = biz && !biz.missing && biz.id !== "root" && biz.ownerUid === state.user.uid;
@@ -925,6 +944,24 @@
     overlay.addEventListener("click", function (e) { if (e.target === overlay) closeModal(); });
     overlay.appendChild(modal);
     $("#modalRoot").appendChild(overlay);
+  }
+
+  // "Install app" from the account menu (website only)
+  function installWebApp(how) {
+    closeModal();
+    if (how === "prompt") {
+      SC.installApp().then(function (ok) { if (ok) toast("Installed \u2014 open it from your home screen or apps"); });
+      return;
+    }
+    formModal({
+      title: "Install the app",
+      text: how === "ios"
+        ? "In Safari, tap the Share button (the square with an arrow) at the bottom of the screen, then Add to Home Screen, then Add. The app then opens from its own icon, full screen."
+        : "Open your browser's menu and choose Install The H Stock Management (Chrome and Edge: the install icon in the address bar, or menu > Install). Safari on a Mac: File > Add to Dock.",
+      fields: [],
+      submitLabel: "OK",
+      onSubmit: async function () {}
+    });
   }
 
   function claimBusinessCode() {

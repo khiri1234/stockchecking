@@ -9,6 +9,9 @@
 //   desktop/build/icon-mac.png           macOS: rounded square with margin
 //   android mipmaps + drawable           launcher icons and start-up icon
 //   app-icon.png                         browser tab, home screen and in-app logo
+//   icons/                               installable web app (manifest.webmanifest)
+//
+// Only the web app icons: node scripts/make-icons.js --web
 const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
@@ -22,12 +25,13 @@ const CROP = { x: 41, y: 30, size: 940 }; // inside the card's outline
 // Runs in the page. shape: "square" | "rounded" | "circle"; inset: margin
 // around the artwork (fraction of the size); scale: artwork size within the
 // shape (Android's adaptive layer is cropped by the launcher)
-function render(src, crop, S, shape, inset, scale) {
+function render(src, crop, S, shape, inset, scale, bg) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const c = document.createElement("canvas"); c.width = c.height = S;
       const g = c.getContext("2d"); g.imageSmoothingQuality = "high";
+      if (bg) { g.fillStyle = bg; g.fillRect(0, 0, S, S); }
       const m = S * inset, w = S - 2 * m;
       g.save();
       if (shape === "circle") { g.beginPath(); g.arc(S / 2, S / 2, w / 2, 0, Math.PI * 2); g.clip(); }
@@ -76,10 +80,25 @@ function png(rgba, S, alpha) {
   async function write(file, S, shape, opts) {
     opts = opts || {};
     const px = await page.evaluate(([fn, a]) => new Function("return " + fn)()(...a),
-      [render.toString(), [src, CROP, S, shape, opts.inset || 0, opts.scale || 1]]);
+      [render.toString(), [src, CROP, S, shape, opts.inset || 0, opts.scale || 1, opts.bg || ""]]);
     file = path.join(root, file);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, png(px, S, shape !== "square" || !!opts.inset));
+    fs.writeFileSync(file, png(px, S, !opts.bg && (shape !== "square" || !!opts.inset)));
+  }
+
+  // Installable web app: rounded icons, and a "maskable" one that the
+  // system crops to its own shape (artwork inside the safe middle 80%)
+  async function webIcons() {
+    await write("icons/icon-192.png", 192, "rounded");
+    await write("icons/icon-512.png", 512, "rounded");
+    await write("icons/icon-maskable-512.png", 512, "square", { inset: 0.12, bg: "#07351B" });
+    await write("icons/apple-touch-icon.png", 180, "square");
+  }
+  if (process.argv.includes("--web")) {
+    await webIcons();
+    await browser.close();
+    console.log("Web app icons written");
+    return;
   }
 
   await write("resources/icon.png", 1024, "square");
@@ -98,6 +117,7 @@ function png(rgba, S, alpha) {
     await write(dir + "ic_launcher_foreground.png", 108 * k, "square", { inset: 0.1 });
   }
   await write("android/app/src/main/res/drawable/splash_icon.png", 288, "circle");
+  await webIcons();
 
   await browser.close();
   console.log("Icons written");
