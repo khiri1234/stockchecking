@@ -1,170 +1,258 @@
 rules_version = '2';
 
 // Everyone signs in with a username and password (Firebase Authentication).
-// A sign-in only grants access when users/{uid} exists and is active, so an
-// account created directly against the Auth API gets nothing.
+// A sign-in only grants access when the account's users/{uid} document
+// exists in that business and is active, so an account created directly
+// against the Auth API gets nothing.
+//
+// Businesses: every business has its own copy of the collections below and
+// can never read another's. The first business (set up before businesses
+// existed) keeps its data at the top level and is called "root" here; each
+// business created since lives under businesses/{biz}/. Shared documents:
+//   businesses/{biz}  name, business code, owner and subscription status
+//   codes/{CODE}      business code -> biz, read before signing in
+//   members/{uid}     sign-in account -> biz (root accounts have none)
 //
 // Roles: "admin" manages staff, imports lists, resets counts and reads the
 // activity log. "staff" can count items and add extra items.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() { return request.auth != null; }
-    function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
-    function isActive() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && userDoc().data.active == true;
+    // A document in business biz ("root" = the top level)
+    function at(biz, rest) {
+      return path('/databases/' + database + '/documents/' + (biz == 'root' ? '' : 'businesses/' + biz + '/') + rest);
     }
-    function isAdmin() { return isActive() && userDoc().data.role == 'admin'; }
+    function bizDoc(biz) { return path('/databases/' + database + '/documents/businesses/' + biz); }
 
-    // First-run setup: the very first account makes itself admin in the same
-    // batch that creates meta/setup. Once meta/setup exists this is closed.
-    function isSetupBatch() {
+    function signedIn() { return request.auth != null; }
+    function me(biz) { return get(at(biz, 'users/' + request.auth.uid)); }
+    function isActive(biz) {
       return signedIn()
-        && !exists(/databases/$(database)/documents/meta/setup)
-        && existsAfter(/databases/$(database)/documents/meta/setup);
+        && exists(at(biz, 'users/' + request.auth.uid))
+        && me(biz).data.active == true;
     }
+    function isAdmin(biz) { return isActive(biz) && me(biz).data.role == 'admin'; }
+    // The person who created the business (not the root one)
+    function isOwner(biz) {
+      return biz != 'root' && isAdmin(biz) && exists(bizDoc(biz))
+        && get(bizDoc(biz)).data.ownerUid == request.auth.uid;
+    }
+
+    // First-run setup. Root: the very first account makes itself admin in the
+    // same batch that creates meta/setup; once that exists this is closed.
+    // A new business: its owner creates businesses/{biz} in the same batch as
+    // their own admin account there.
+    function isSetupBatch(biz) {
+      return signedIn() && (biz == 'root'
+        ? !exists(at('root', 'meta/setup')) && existsAfter(at('root', 'meta/setup'))
+        : !exists(bizDoc(biz)) && existsAfter(bizDoc(biz))
+          && getAfter(bizDoc(biz)).data.ownerUid == request.auth.uid);
+    }
+
+    function m(method) { return request.method == method; }
+    function reading() { return m('get') || m('list'); }
+    function writing() { return m('create') || m('update'); }
+    function data() { return request.resource.data; }
 
     function validItem(d) {
       return d.barcode is string && d.barcode.size() > 0 && d.barcode.size() <= 200
         && d.description is string && d.description.size() <= 1000;
     }
 
-    // Product list, stored as a few large text documents ("barcode<TAB>description" lines)
-    match /catalog/{id} {
-      allow read: if isActive();
-      allow create, update: if isAdmin() && request.resource.data.lines is string;
-      allow delete: if isAdmin();
+    // Every rule for one business's documents: coll/id inside business biz
+    function allowData(biz, coll, id) {
+      return coll == 'catalog' ? catalogOk(biz)
+        : coll == 'counts' ? countsOk(biz)
+        : coll == 'recounts' ? recountsOk(biz)
+        : coll == 'areas' ? (reading() ? isActive(biz) : isAdmin(biz))
+        : coll == 'tasks' ? tasksOk(biz)
+        : coll == 'meta' ? metaOk(biz, id)
+        : coll == 'products' ? productsOk(biz)
+        : coll == 'extras' ? extrasOk(biz)
+        : coll == 'users' ? usersOk(biz, id)
+        : coll == 'usernames' ? usernamesOk(biz)
+        : coll == 'activity' ? activityOk(biz)
+        : false;
     }
 
-    // One document per counted item
-    match /counts/{id} {
-      allow read: if isActive();
-      // Admins may keep someone else's name on a count (converting old lists)
-      allow create, update: if (isAdmin() || (isActive() && request.resource.data.byUid == request.auth.uid))
-        && request.resource.data.barcode is string && request.resource.data.barcode.size() <= 200
-        && request.resource.data.qty is int && request.resource.data.qty >= 0;
-      allow delete: if isAdmin();
+    // Product list, stored as a few large text documents ("barcode<TAB>description" lines)
+    function catalogOk(biz) {
+      return reading() ? isActive(biz)
+        : writing() ? isAdmin(biz) && data().lines is string
+        : isAdmin(biz);
+    }
+
+    // One document per counted item. Admins may keep someone else's name on a
+    // count (converting old lists).
+    function countsOk(biz) {
+      return reading() ? isActive(biz)
+        : writing() ? (isAdmin(biz) || (isActive(biz) && data().byUid == request.auth.uid))
+          && data().barcode is string && data().barcode.size() <= 200
+          && data().qty is int && data().qty >= 0
+        : isAdmin(biz);
     }
 
     // Recount requests. Admins ask and decide; anyone active except the
     // person who made the first count can save the recount, once.
-    match /recounts/{id} {
-      allow read: if isActive();
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin()
-        || (isActive()
-          && resource.data.status == 'open'
-          && request.auth.uid != resource.data.firstByUid
-          && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['status', 'recountQty', 'recountBy', 'recountByUid', 'recountAt'])
-          && request.resource.data.status == 'done'
-          && request.resource.data.recountByUid == request.auth.uid
-          && request.resource.data.recountQty is int && request.resource.data.recountQty >= 0);
-    }
-
-    // Places counted separately ("Aisle 3", "Warehouse"); kept between stock checks
-    match /areas/{id} {
-      allow read: if isActive();
-      allow write: if isAdmin();
+    function recountsOk(biz) {
+      return reading() ? isActive(biz)
+        : m('update') ? isAdmin(biz)
+          || (isActive(biz)
+            && resource.data.status == 'open'
+            && request.auth.uid != resource.data.firstByUid
+            && data().diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'recountQty', 'recountBy', 'recountByUid', 'recountAt'])
+            && data().status == 'done'
+            && data().recountByUid == request.auth.uid
+            && data().recountQty is int && data().recountQty >= 0)
+        : isAdmin(biz);
     }
 
     // Work assigned to one person. They can read their own tasks and mark
     // them done; admins manage all of them.
-    match /tasks/{id} {
-      allow read: if isAdmin() || (isActive() && resource.data.uid == request.auth.uid);
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin()
-        || (isActive() && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done', 'doneAt']));
+    function tasksOk(biz) {
+      return reading() ? isAdmin(biz) || (isActive(biz) && resource.data.uid == request.auth.uid)
+        : m('update') ? isAdmin(biz)
+          || (isActive(biz) && resource.data.uid == request.auth.uid
+              && data().diff(resource.data).affectedKeys().hasOnly(['done', 'doneAt']))
+        : isAdmin(biz);
+    }
+
+    function metaOk(biz, id) {
+      return id == 'stats' ? statsOk(biz)
+        // Current stock check details
+        : id == 'session' ? (reading() ? isActive(biz) : isAdmin(biz))
+        // Marks that the first admin has been created
+        : id == 'setup' ? (m('get') ? true
+          : m('create') ? signedIn()
+            && !exists(at(biz, 'meta/setup'))
+            && getAfter(at(biz, 'users/' + request.auth.uid)).data.role == 'admin'
+          : m('delete') && isOwner(biz))
+        : false;
     }
 
     // Running total of counted items: staff can only add one at a time
-    match /meta/stats {
-      allow read: if isActive();
-      allow create: if isAdmin()
-        || (isActive() && request.resource.data.keys().hasOnly(['counted']) && request.resource.data.counted == 1);
-      allow update: if isAdmin()
-        || (isActive() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counted'])
-            && request.resource.data.counted == resource.data.counted + 1);
-      allow delete: if isAdmin();
+    function statsOk(biz) {
+      return reading() ? isActive(biz)
+        : m('create') ? isAdmin(biz)
+          || (isActive(biz) && data().keys().hasOnly(['counted']) && data().counted == 1)
+        : m('update') ? isAdmin(biz)
+          || (isActive(biz) && data().diff(resource.data).affectedKeys().hasOnly(['counted'])
+              && data().counted == resource.data.counted + 1)
+        : isAdmin(biz);
     }
 
-    // Product lists saved before the catalog format (read to show, admins clear them)
-    // Staff can still save counts here so copies of the app installed before
-    // the update keep working until they're updated.
-    match /products/{id} {
-      allow read: if isActive();
-      allow create: if isAdmin() && validItem(request.resource.data);
-      allow delete: if isAdmin();
-      allow update: if validItem(request.resource.data)
-        && (request.resource.data.countedQty == null || request.resource.data.countedQty is int)
-        && (isAdmin()
-          || (isActive()
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['countedQty', 'updatedBy', 'updatedByUid', 'updatedAt'])
-            && request.resource.data.updatedByUid == request.auth.uid));
+    // Product lists saved before the catalog format (read to show, admins
+    // clear them). Staff can still save counts here so copies of the app
+    // installed before the update keep working until they're updated.
+    function productsOk(biz) {
+      return reading() ? isActive(biz)
+        : m('create') ? isAdmin(biz) && validItem(data())
+        : m('update') ? validItem(data())
+          && (data().countedQty == null || data().countedQty is int)
+          && (isAdmin(biz)
+            || (isActive(biz)
+              && data().diff(resource.data).affectedKeys()
+                   .hasOnly(['countedQty', 'updatedBy', 'updatedByUid', 'updatedAt'])
+              && data().updatedByUid == request.auth.uid))
+        : isAdmin(biz);
     }
 
     // Scanned items that weren't on the uploaded list
-    match /extras/{id} {
-      allow read: if isActive();
-      allow create, update: if isActive() && validItem(request.resource.data)
-        && request.resource.data.qty is int
-        && request.resource.data.addedByUid == request.auth.uid;
-      allow delete: if isAdmin();
-    }
-
-    // Current stock check details
-    match /meta/session {
-      allow read: if isActive();
-      allow write: if isAdmin();
-    }
-
-    // Marks that the first admin has been created
-    match /meta/setup {
-      allow get: if true;
-      allow create: if signedIn()
-        && !exists(/databases/$(database)/documents/meta/setup)
-        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    function extrasOk(biz) {
+      return reading() ? isActive(biz)
+        : writing() ? isActive(biz) && validItem(data())
+          && data().qty is int
+          && data().addedByUid == request.auth.uid
+        : isAdmin(biz);
     }
 
     // Staff accounts. Password resets create a new sign-in account and mark
     // the old document inactive with replacedBy, so history stays intact.
-    match /users/{uid} {
-      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow list: if isAdmin();
-      allow create: if isAdmin()
-        || (isSetupBatch() && request.auth.uid == uid
-            && request.resource.data.role == 'admin' && request.resource.data.active == true);
-      allow update: if isAdmin() && request.resource.data.username == resource.data.username;
-      // Staff may delete their own account (App Store requirement)
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    function usersOk(biz, uid) {
+      return m('get') ? isAdmin(biz) || (signedIn() && request.auth.uid == uid)
+        : m('list') ? isAdmin(biz)
+        : m('create') ? isAdmin(biz)
+          || (isSetupBatch(biz) && request.auth.uid == uid
+              && data().role == 'admin' && data().active == true)
+        : m('update') ? isAdmin(biz) && data().username == resource.data.username
+        // Anyone may delete their own account (App Store requirement)
+        : isAdmin(biz) || (signedIn() && request.auth.uid == uid);
     }
 
     // Username -> sign-in email lookup, needed before signing in.
     // Readable one at a time only; the list of usernames can't be fetched.
-    match /usernames/{username} {
+    function usernamesOk(biz) {
+      return m('get') ? true
+        : m('list') ? false
+        : m('create') ? isAdmin(biz) || (isSetupBatch(biz) && data().uid == request.auth.uid)
+        : m('update') ? isAdmin(biz)
+        : isAdmin(biz) || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Append-only activity log; only removed when the owner deletes the business
+    function activityOk(biz) {
+      return reading() ? isAdmin(biz)
+        : m('create') ? isActive(biz)
+          && data().uid == request.auth.uid
+          && data().at == request.time
+          && data().action is string
+        : m('delete') && isOwner(biz);
+    }
+
+    // The first business's data, at the top level
+    match /{coll}/{id} {
+      allow read, write: if allowData('root', coll, id);
+    }
+
+    // Every business created since
+    match /businesses/{biz}/{coll}/{id} {
+      allow read, write: if biz != 'root' && allowData(biz, coll, id);
+    }
+
+    // Business name, code, owner and subscription. businesses/root holds the
+    // first business's name and code (its data stays at the top level).
+    match /businesses/{biz} {
+      allow get: if isActive(biz);
+      allow create: if signedIn()
+        && data().ownerUid == request.auth.uid
+        && data().name is string && data().name.size() > 0 && data().name.size() <= 80
+        && data().code is string && existsAfter(path('/databases/' + database + '/documents/codes/' + data().code))
+        && (biz == 'root'
+          ? isAdmin('root')
+          : getAfter(at(biz, 'users/' + request.auth.uid)).data.role == 'admin');
+      // Admins rename it; the code and owner never change. Any member's
+      // device may record the subscription status it found (plan).
+      allow update: if (isAdmin(biz)
+          && data().code == resource.data.code && data().ownerUid == resource.data.ownerUid
+          && data().name is string && data().name.size() > 0 && data().name.size() <= 80)
+        || (isActive(biz) && data().diff(resource.data).affectedKeys().hasOnly(['plan']));
+      allow delete: if isOwner(biz);
+    }
+
+    // Business code -> business, looked up before signing in (one at a time)
+    match /codes/{code} {
       allow get: if true;
-      allow list: if false;
-      allow create: if isAdmin() || (isSetupBatch() && request.resource.data.uid == request.auth.uid);
-      allow update: if isAdmin();
-      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow list, update: if false;
+      allow create: if signedIn()
+        && code.matches('^[A-Z2-9]{6}$')
+        && data().keys().hasOnly(['biz'])
+        && getAfter(bizDoc(data().biz)).data.code == code
+        && (data().biz == 'root' ? isAdmin('root') : isSetupBatch(data().biz));
+      allow delete: if isOwner(resource.data.biz);
     }
 
-    // Append-only activity log
-    match /activity/{id} {
-      allow read: if isAdmin();
-      allow create: if isActive()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.at == request.time
-        && request.resource.data.action is string;
-      allow update, delete: if false;
-    }
-
-    match /{document=**} {
-      allow read, write: if false;
+    // Sign-in account -> its business. Made with the account (by the owner
+    // for themselves, or by an admin for their staff).
+    match /members/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin(resource.data.biz));
+      allow list: if signedIn() && isAdmin(resource.data.biz);
+      allow create: if signedIn()
+        && data().keys().hasOnly(['biz']) && data().biz is string && data().biz != 'root'
+        && existsAfter(at(data().biz, 'users/' + uid))
+        && ((request.auth.uid == uid && isSetupBatch(data().biz)) || isAdmin(data().biz));
+      allow update: if false;
+      allow delete: if signedIn() && (request.auth.uid == uid || isAdmin(resource.data.biz));
     }
   }
 }
