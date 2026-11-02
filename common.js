@@ -18,14 +18,17 @@
   var profile = null; // { uid, username, name, role, active }
   var authCb = null, holdAuth = false, profileUnsub = null;
 
-  /* In-app subscriptions (RevenueCat: app.revenuecat.com > Project > API keys).
-   * Paste the public Apple and Google keys. While both are empty, nobody is
-   * asked to subscribe. The first business (the one set up before businesses
-   * existed) never needs a subscription. */
+  /* In-app purchase that unlocks a business (RevenueCat: app.revenuecat.com >
+   * Project > API keys). A one-time purchase (non-consumable); a subscription
+   * product works too. Paste the public Apple and Google keys. While both are
+   * empty, nobody is asked to pay. The first business (the one set up before
+   * businesses existed) never needs to. */
   var SUBSCRIPTIONS = {
     appleApiKey: "",
     googleApiKey: "",
-    entitlement: "full_access"
+    entitlement: "full_access",
+    // Items a business can count for free before it has to buy
+    freeItems: 50
   };
 
   /* ---------------- businesses ----------------
@@ -148,8 +151,9 @@
       "bad-business-name": "Enter your business name (up to 80 characters).",
       "bad-name": "Enter your name.",
       "cancelled": "Purchase cancelled.",
-      "no-plans": "Subscriptions aren't available right now. Try again later.",
-      "store-unavailable": "Subscriptions can only be bought in the iPhone or Android app."
+      "no-plans": "The purchase isn't available right now. Try again later.",
+      "store-unavailable": "The full version can only be bought in the iPhone or Android app.",
+      "free-limit": "Your business has counted its " + SUBSCRIPTIONS.freeItems + " free items. Unlock the full version to keep counting."
     };
     return map[code] || (e && e.message) || "Something went wrong.";
   }
@@ -215,7 +219,7 @@
     area_merged: "Moved counts to an area",
     task_assigned: "Assigned a task",
     task_done: "Finished a task",
-    subscribed: "Started the subscription"
+    subscribed: "Unlocked the full version"
   };
 
   /* ---------------- stock data ----------------
@@ -410,12 +414,13 @@
   async function saveCount(item, qty, before) {
     var now = new Date().toISOString(), parts = {};
     parts[newPartId()] = part(qty, now);
+    if (!before && mustSubscribe()) throw err("free-limit");
     var batch = db.batch();
     batch.set(D("counts/" + item.id), {
       barcode: item.barcode, description: item.description || "", qty: qty,
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     });
-    if (!before) batch.set(D("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true });
+    if (!before) { batch.set(D("meta/stats"), { counted: firebase.firestore.FieldValue.increment(1) }, { merge: true }); countUsed(); }
     var res = await track(batch.commit());
     log("count_saved", { barcode: item.barcode, description: item.description || "", qty: qty, prevQty: before ? before.qty : null });
     return res;
@@ -426,6 +431,7 @@
   // item's count doc as last seen, or null if it had none. Resolves as track()
   // does: when the server has it, or once it's kept on the device.
   function addToCount(item, n, partId, before) {
+    if (!before && mustSubscribe()) return Promise.reject(err("free-limit"));
     var inc = firebase.firestore.FieldValue.increment, now = new Date().toISOString(), parts = {};
     // A count saved without parts (older versions, recount results) keeps its total as the first part
     if (before && !before.parts) parts.all = { qty: before.qty, by: before.by || "", byUid: before.byUid || "", at: before.at || now };
@@ -438,7 +444,7 @@
       barcode: item.barcode, description: item.description || "", qty: inc(n),
       by: profile.name, byUid: profile.uid, at: now, parts: parts
     }, { merge: true });
-    if (!before) batch.set(D("meta/stats"), { counted: inc(1) }, { merge: true });
+    if (!before) { batch.set(D("meta/stats"), { counted: inc(1) }, { merge: true }); countUsed(); }
     return track(batch.commit());
   }
 
@@ -971,6 +977,24 @@
   }
 
   function subscriptionsOn() { return !!(SUBSCRIPTIONS.appleApiKey || SUBSCRIPTIONS.googleApiKey); }
+
+  // Free allowance: every new item a business counts adds one to
+  // businesses/{biz}.used (not the first business), whether or not
+  // subscriptions are switched on yet
+  // A write of its own, so a refusal can never stop the count itself being saved
+  function countUsed() {
+    if (biz === "root") return;
+    db.doc("businesses/" + biz).update({ used: firebase.firestore.FieldValue.increment(1) })
+      .catch(function (e) { console.warn("free allowance not recorded", e); });
+    if (bizInfo && !bizInfo.missing) bizInfo.used = (bizInfo.used || 0) + 1; // so the limit applies straight away
+  }
+  function freeUsed(info) { return ((info || bizInfo) && (info || bizInfo).used) || 0; }
+  function freeLeft(info) { return Math.max(0, SUBSCRIPTIONS.freeItems - freeUsed(info)); }
+  // True when the business must subscribe before counting another new item
+  function mustSubscribe(info) {
+    info = info || bizInfo;
+    return planNeeded() && !!info && !info.missing && !planActive(info) && freeLeft(info) <= 0;
+  }
   // Does this business need a subscription to use the app?
   function planNeeded() { return subscriptionsOn() && biz !== "root"; }
   // The subscription last recorded for the business (seen by any member's phone)
@@ -1279,6 +1303,9 @@
     normalizeCode: normalizeCode,
     planNeeded: planNeeded,
     planActive: planActive,
+    mustSubscribe: mustSubscribe,
+    freeLeft: freeLeft,
+    FREE_ITEMS: SUBSCRIPTIONS.freeItems,
     canBuy: canBuy,
     checkPlan: checkPlan,
     getPlans: getPlans,

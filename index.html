@@ -728,15 +728,24 @@
     } else {
       active = SC.planActive(await businessInfo(8000));
     }
-    if (active) proceed();
-    else showPaywall(proceed);
+    if (active) return proceed();
+    // Still within the free items: in, subscription offered once they're used
+    if (!SC.mustSubscribe(await businessInfo(8000))) return proceed();
+    showPaywall(proceed);
+  }
+  // Called when a new item would go past the free allowance
+  function freeLimitHit(e) {
+    if (!e || e.code !== "free-limit") return false;
+    feedback(false);
+    showPaywall(function () { hideAuthScreen(); }, "", "You've counted your " + SC.FREE_ITEMS + " free items.");
+    return true;
   }
 
   var TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
   var PRIVACY_URL = "https://stock.hatef.cc/privacy.html";
   function openExternal(url) { window.open(url, "_blank"); }
 
-  async function showPaywall(proceed, message) {
+  async function showPaywall(proceed, message, lead) {
     var root = $("#authRoot");
     root.dataset.mode = "paywall";
     root.innerHTML = "";
@@ -763,16 +772,20 @@
       return b;
     }
     function afterCheck(plan) {
-      if (plan && plan.active) { toast("Subscription active"); proceed(); }
-      else errorBox.textContent = "No active subscription found.";
+      if (plan && plan.active) { toast("Full version unlocked"); proceed(); }
+      else errorBox.textContent = "No purchase found for this business.";
     }
 
     if (isAdmin() && SC.canBuy()) {
-      card.appendChild(el("p", { class: "auth-sub", text: "Subscribe to use the app with your whole team: unlimited staff, products and stock checks. Staff phones don't need their own subscription." }));
+      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Unlock the full version for your business: unlimited staff, products and stock checks, for your whole team. Staff phones don't need to buy it." }));
       var plansBox = el("div", { class: "menu-list", text: "Loading plans…" });
       card.appendChild(plansBox);
       SC.getPlans().then(function (plans) {
         plansBox.innerHTML = "";
+        var store = window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID";
+        finePrint.textContent = plans.some(function (p) { return p.period; })
+          ? "Payment is charged to your " + store + " account. A subscription renews automatically unless it's cancelled at least 24 hours before the end of the current period. You can manage or cancel it in your account settings."
+          : "One-time purchase, charged to your " + store + " account. It unlocks the full version for this business, with no subscription. Reinstalled the app or using another phone? Use Restore purchases.";
         plans.forEach(function (plan) {
           var label = plan.title + " — " + plan.price + (plan.period ? " / " + plan.period : "");
           var b = el("button", { type: "button", class: "btn btn-primary btn-block" }, [
@@ -791,17 +804,17 @@
       }).catch(function (e) { plansBox.textContent = ""; errorBox.textContent = SC.friendlyError(e); });
       card.appendChild(errorBox);
       button("Restore purchases", async function () { afterCheck(await SC.restorePlans()); });
-      card.appendChild(el("p", { class: "fine-print", text: "Payment is charged to your " + (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID") +
-        " account. The subscription renews automatically unless it's cancelled at least 24 hours before the end of the current period. You can manage or cancel it in your account settings." }));
+      var finePrint = el("p", { class: "fine-print" });
+      card.appendChild(finePrint);
       var links = el("p", { class: "fine-print" });
       var terms = el("a", { href: TERMS_URL, text: "Terms of Use" }), privacy = el("a", { href: PRIVACY_URL, text: "Privacy Policy" });
       [terms, privacy].forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); openExternal(a.href); }); });
       links.appendChild(terms); links.appendChild(document.createTextNode(" · ")); links.appendChild(privacy);
       card.appendChild(links);
     } else {
-      card.appendChild(el("p", { class: "auth-sub", text: isAdmin()
-        ? "Your business's subscription isn't active. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there."
-        : "Your business's subscription isn't active. Ask your manager to renew it in the app." }));
+      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + (isAdmin()
+        ? "Your business needs the full version to keep counting. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and unlock it there."
+        : "Your business needs the full version to keep counting. Ask your manager to unlock it in the app.") }));
       card.appendChild(errorBox);
       button("Check again", async function () {
         if (SC.canBuy()) return afterCheck(await SC.checkPlan());
@@ -887,6 +900,8 @@
     if (biz && !biz.missing) modal.appendChild(el("p", { class: "biz-line" }, [
       el("span", { text: biz.name + " · business code " }), el("b", { class: "mono", text: biz.code })
     ]));
+    if (biz && !biz.missing && SC.planNeeded() && !SC.planActive(biz)) modal.appendChild(el("p", { class: "biz-line",
+      text: "Free version: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }));
     var list = el("div", { class: "menu-list" });
     function item(label, fn, cls) {
       var b = el("button", { type: "button", class: "btn btn-block " + (cls || "btn-secondary"), text: label });
@@ -895,7 +910,11 @@
     }
     if (!SC.isNative()) item("Open desktop dashboard", function () { location.href = "dashboard.html"; });
     if (isAdmin() && biz && biz.missing) item("Get a business code", claimBusinessCode);
-    if (isAdmin() && SC.planNeeded() && SC.canBuy()) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
+    if (isAdmin() && SC.planNeeded() && SC.canBuy()) {
+      // A subscription (it has an end date) can be managed; a one-time purchase has nothing to manage
+      if (SC.planActive(biz) && biz.plan.expiresAt) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
+      else if (!SC.planActive(biz)) item("Unlock full version", function () { closeModal(); showPaywall(function () { hideAuthScreen(); }); });
+    }
     item("Change password", changePassword);
     item("Sign out", async function () { closeModal(); await SC.signOut(); });
     var owner = biz && !biz.missing && biz.id !== "root" && biz.ownerUid === state.user.uid;
@@ -924,8 +943,7 @@
   function deleteBusiness() {
     formModal({
       title: "Delete business",
-      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone. Cancel the subscription separately in your " +
-        (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "App Store") + " account settings. Enter your password to confirm.",
+      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone, and the full-version purchase isn't refunded. Enter your password to confirm.",
       fields: [{ name: "password", label: "Password", type: "password", autocomplete: "current-password" }],
       submitLabel: "Delete business",
       danger: true,
@@ -1606,7 +1624,7 @@
       }
       if (state.currentScan === sc) { sc.mode = "add"; renderScannedCard(); }
     } catch (e) {
-      toast("Couldn't save: " + (e && e.code ? e.code : "error"));
+      if (!freeLimitHit(e)) toast("Couldn't save: " + (e && e.code ? e.code : "error"));
     } finally {
       sc.saving = false;
     }
@@ -1662,7 +1680,9 @@
     e.written = true;
     SC.addToCount(e.item, 1, e.partId, before).catch(function (err) {
       e.total -= 1; e.added -= 1; e.unlogged -= 1;
-      feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); renderQuickCard();
+      if (err && err.code === "free-limit") e.written = false; // nothing was saved for it
+      if (!freeLimitHit(err)) { feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); }
+      renderQuickCard();
     });
     scheduleQuickLog(e);
   }

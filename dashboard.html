@@ -603,7 +603,7 @@
   }
 
   /* ---------------- business and subscription ----------------
-   * Subscriptions are bought in the iPhone or Android app; the dashboard
+   * The full version is bought in the iPhone or Android app; the dashboard
    * reads the status those phones record on the business. */
   function watchBusiness() {
     if (state.businessUnsub) state.businessUnsub();
@@ -620,8 +620,21 @@
       setTimeout(function () { resolve(state.business); }, ms);
     });
   }
+  // Called when a new item would go past the free allowance
+  function freeLimitHit(e) {
+    if (!e || e.code !== "free-limit") return false;
+    showPaywall(function () {
+      $("#authRoot").hidden = true; $("#authRoot").innerHTML = ""; document.body.classList.remove("signed-out");
+    }, "You've counted your " + SC.FREE_ITEMS + " free items.");
+    return true;
+  }
   async function planGate(proceed) {
-    if (!SC.planNeeded() || SC.planActive(await businessInfo(8000))) return proceed();
+    var info = SC.planNeeded() ? await businessInfo(8000) : null;
+    // In while subscribed or still within the free items
+    if (!SC.planNeeded() || SC.planActive(info) || !SC.mustSubscribe(info)) return proceed();
+    showPaywall(proceed);
+  }
+  function showPaywall(proceed, lead) {
     var root = $("#authRoot");
     root.dataset.mode = "paywall";
     root.innerHTML = "";
@@ -630,13 +643,13 @@
     var errorBox = el("div", { class: "form-error", role: "alert" });
     root.appendChild(el("div", { class: "auth-card" }, [
       el("div", { class: "auth-brand" }, [el("div", { class: "glyph", html: '<img src="app-icon.png" alt="">' }), el("h1", { text: (state.business && state.business.name) || "The H Stock Management" })]),
-      el("p", { class: "auth-sub", text: isAdmin()
-        ? "Your business's subscription isn't active. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there. Then come back and choose Check again."
-        : "Your business's subscription isn't active. Ask your manager to renew it in the app." }),
+      el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + (isAdmin()
+        ? "Your business needs the full version to keep counting. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and unlock it there. Then come back and choose Check again."
+        : "Your business needs the full version to keep counting. Ask your manager to unlock it in the app.") }),
       state.newBusinessCode ? codeNote(state.newBusinessCode) : null,
       errorBox,
       el("button", { type: "button", class: "btn btn-primary btn-block", text: "Check again", onclick: function () {
-        if (SC.planActive(state.business)) proceed(); else errorBox.textContent = "No active subscription found yet.";
+        if (SC.planActive(state.business)) proceed(); else errorBox.textContent = "The full version isn't unlocked yet.";
       } }),
       el("button", { type: "button", class: "btn btn-secondary btn-block", style: "margin-top:8px", text: "Sign out", onclick: function () { SC.signOut(); } })
     ].filter(Boolean)));
@@ -1493,7 +1506,7 @@
       toast("Recount saved: " + qty);
       state.currentScan = null;
       if (state.page === "count") renderPage();
-    } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
+    } catch (e) { if (!freeLimitHit(e)) toast("Couldn't save: " + SC.friendlyError(e)); }
     finally { delete savingIds[id]; }
   }
 
@@ -1529,7 +1542,7 @@
       }
       state.currentScan = null;
       if (state.page === "count") renderPage();
-    } catch (e) { toast("Couldn't save: " + SC.friendlyError(e)); }
+    } catch (e) { if (!freeLimitHit(e)) toast("Couldn't save: " + SC.friendlyError(e)); }
     finally { delete savingIds[id]; }
   }
 
@@ -1688,7 +1701,10 @@
     e.added += 1; e.unlogged += 1;
     feedback(true);
     SC.addToCount(e.item, 1, e.partId, before).catch(function (err) {
-      e.added -= 1; e.unlogged -= 1; feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); renderQuickCard();
+      e.added -= 1; e.unlogged -= 1;
+      if (err && err.code === "free-limit") e.written = false; // nothing was saved for it
+      if (!freeLimitHit(err)) { feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); }
+      renderQuickCard();
     });
     scheduleQuickLog(e);
     renderQuickCard();
@@ -2437,6 +2453,7 @@
       el("h3", { text: state.user.name }),
       el("p", { text: "@" + state.user.username + " · " + (isAdmin() ? "Admin" : "Staff") }),
       biz && !biz.missing ? el("p", {}, [el("span", { text: biz.name + " \u00b7 business code " }), el("b", { class: "mono biz-code", text: biz.code })]) : null,
+      biz && !biz.missing && SC.planNeeded() && !SC.planActive(biz) ? el("p", { text: "Free version: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }) : null,
       el("div", { style: "display:flex;flex-direction:column;gap:8px" }, [
         item("Change password", changePassword),
         item("Sign out", async function () { closeModal(); await SC.signOut(); }),
@@ -2469,7 +2486,7 @@
   function deleteBusiness() {
     formModal({
       title: "Delete business",
-      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone. Cancel the subscription separately in the App Store or Google Play. Enter your password to confirm.",
+      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone, and the full-version purchase isn't refunded. Enter your password to confirm.",
       fields: [{ name: "password", label: "Password", type: "password", autocomplete: "current-password" }],
       submitLabel: "Delete business",
       danger: true,
