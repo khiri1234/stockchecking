@@ -214,6 +214,13 @@ await t('owner never changes', assertFails(updateDoc(doc(olga, 'businesses/B1'),
 await t('staff cannot rename business', assertFails(updateDoc(doc(sam, 'businesses/B1'), { name: 'Mine' })));
 await t('staff device records subscription', assertSucceeds(updateDoc(doc(sam, 'businesses/B1'), { plan: { active: true, expiresAt: 'x' } })));
 await t('other business cannot touch subscription', assertFails(updateDoc(doc(pete, 'businesses/B1'), { plan: { active: true } })));
+await t('staff counts one free item', assertSucceeds(updateDoc(doc(sam, 'businesses/B1'), { used: 1 })));
+await t('staff counts the next free item', assertSucceeds(updateDoc(doc(sam, 'businesses/B1'), { used: 2 })));
+await t('free allowance cannot jump', assertFails(updateDoc(doc(sam, 'businesses/B1'), { used: 10 })));
+await t('free allowance cannot be reset by staff', assertFails(updateDoc(doc(sam, 'businesses/B1'), { used: 0 })));
+await t('free allowance cannot be reset by the owner', assertFails(updateDoc(doc(olga, 'businesses/B1'), { used: 0 })));
+await t('owner rename keeps the allowance', assertSucceeds(updateDoc(doc(olga, 'businesses/B1'), { name: 'Olga Fruit' })));
+await t('other business cannot use B1 allowance', assertFails(updateDoc(doc(pete, 'businesses/B1'), { used: 3 })));
 
 // the first business gets a code too
 { const b = writeBatch(alice);

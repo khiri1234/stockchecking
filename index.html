@@ -728,15 +728,24 @@
     } else {
       active = SC.planActive(await businessInfo(8000));
     }
-    if (active) proceed();
-    else showPaywall(proceed);
+    if (active) return proceed();
+    // Still within the free items: in, subscription offered once they're used
+    if (!SC.mustSubscribe(await businessInfo(8000))) return proceed();
+    showPaywall(proceed);
+  }
+  // Called when a new item would go past the free allowance
+  function freeLimitHit(e) {
+    if (!e || e.code !== "free-limit") return false;
+    feedback(false);
+    showPaywall(function () { hideAuthScreen(); }, "", "You've counted your " + SC.FREE_ITEMS + " free items.");
+    return true;
   }
 
   var TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
   var PRIVACY_URL = "https://stock.hatef.cc/privacy.html";
   function openExternal(url) { window.open(url, "_blank"); }
 
-  async function showPaywall(proceed, message) {
+  async function showPaywall(proceed, message, lead) {
     var root = $("#authRoot");
     root.dataset.mode = "paywall";
     root.innerHTML = "";
@@ -768,7 +777,7 @@
     }
 
     if (isAdmin() && SC.canBuy()) {
-      card.appendChild(el("p", { class: "auth-sub", text: "Subscribe to use the app with your whole team: unlimited staff, products and stock checks. Staff phones don't need their own subscription." }));
+      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Subscribe to keep using the app with your whole team: unlimited staff, products and stock checks. Staff phones don't need their own subscription." }));
       var plansBox = el("div", { class: "menu-list", text: "Loading plans…" });
       card.appendChild(plansBox);
       SC.getPlans().then(function (plans) {
@@ -799,9 +808,9 @@
       links.appendChild(terms); links.appendChild(document.createTextNode(" · ")); links.appendChild(privacy);
       card.appendChild(links);
     } else {
-      card.appendChild(el("p", { class: "auth-sub", text: isAdmin()
-        ? "Your business's subscription isn't active. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there."
-        : "Your business's subscription isn't active. Ask your manager to renew it in the app." }));
+      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + (isAdmin()
+        ? "Your business needs a subscription to keep counting. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there."
+        : "Your business needs a subscription to keep counting. Ask your manager to subscribe in the app.") }));
       card.appendChild(errorBox);
       button("Check again", async function () {
         if (SC.canBuy()) return afterCheck(await SC.checkPlan());
@@ -887,6 +896,8 @@
     if (biz && !biz.missing) modal.appendChild(el("p", { class: "biz-line" }, [
       el("span", { text: biz.name + " · business code " }), el("b", { class: "mono", text: biz.code })
     ]));
+    if (biz && !biz.missing && SC.planNeeded() && !SC.planActive(biz)) modal.appendChild(el("p", { class: "biz-line",
+      text: "Free plan: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }));
     var list = el("div", { class: "menu-list" });
     function item(label, fn, cls) {
       var b = el("button", { type: "button", class: "btn btn-block " + (cls || "btn-secondary"), text: label });
@@ -895,7 +906,10 @@
     }
     if (!SC.isNative()) item("Open desktop dashboard", function () { location.href = "dashboard.html"; });
     if (isAdmin() && biz && biz.missing) item("Get a business code", claimBusinessCode);
-    if (isAdmin() && SC.planNeeded() && SC.canBuy()) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
+    if (isAdmin() && SC.planNeeded() && SC.canBuy()) {
+      if (SC.planActive(biz)) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
+      else item("Subscribe", function () { closeModal(); showPaywall(function () { hideAuthScreen(); }); });
+    }
     item("Change password", changePassword);
     item("Sign out", async function () { closeModal(); await SC.signOut(); });
     var owner = biz && !biz.missing && biz.id !== "root" && biz.ownerUid === state.user.uid;
@@ -1606,7 +1620,7 @@
       }
       if (state.currentScan === sc) { sc.mode = "add"; renderScannedCard(); }
     } catch (e) {
-      toast("Couldn't save: " + (e && e.code ? e.code : "error"));
+      if (!freeLimitHit(e)) toast("Couldn't save: " + (e && e.code ? e.code : "error"));
     } finally {
       sc.saving = false;
     }
@@ -1662,7 +1676,9 @@
     e.written = true;
     SC.addToCount(e.item, 1, e.partId, before).catch(function (err) {
       e.total -= 1; e.added -= 1; e.unlogged -= 1;
-      feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); renderQuickCard();
+      if (err && err.code === "free-limit") e.written = false; // nothing was saved for it
+      if (!freeLimitHit(err)) { feedback(false); toast("Couldn't save: " + SC.friendlyError(err)); }
+      renderQuickCard();
     });
     scheduleQuickLog(e);
   }

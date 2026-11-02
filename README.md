@@ -170,8 +170,11 @@ separate: the security rules only let a business's own accounts read it.
 
 ### Subscriptions (in-app purchase)
 
-The owner subscribes once in the iPhone or Android app; every staff phone of
-the business sees it. Purchases go through RevenueCat
+Each new business counts its first 50 items free (`freeItems` in
+`SUBSCRIPTIONS`; `businesses/{biz}.used` goes up by one for each new item
+counted and the rules only let it go up). After that, counting a new item, or
+opening the app, asks for the subscription. The owner subscribes once in the
+iPhone or Android app; every staff phone of the business sees it. Purchases go through RevenueCat
 (`@revenuecat/purchases-capacitor`), whose customer ID is the business ID.
 The dashboard and web app can't take payments: they read the status the phones
 record on `businesses/{biz}.plan` and show "subscribe in the app" until it's
@@ -183,8 +186,8 @@ setup:
 
 1. **App Store Connect** > your app > **Subscriptions**: create a subscription
    group (e.g. "The H Stock Management") with a product such as
-   `hstock_monthly` (and `hstock_yearly` if you like). Set prices, and add an
-   introductory offer (e.g. 7 days free) if wanted. Fill in each product's
+   `hstock_monthly` (and `hstock_yearly` if you like) and set prices. No
+   introductory offer is needed: the 50 free items are the trial. Fill in each product's
    display name, description and review screenshot (the subscription screen).
    Sign the **Paid Apps Agreement** (Business section), and create an
    **In-App Purchase key** for RevenueCat (Users and Access > Integrations >

@@ -222,11 +222,16 @@ service cloud.firestore {
           ? isAdmin('root')
           : getAfter(at(biz, 'users/' + request.auth.uid)).data.role == 'admin');
       // Admins rename it; the code and owner never change. Any member's
-      // device may record the subscription status it found (plan).
+      // device may record the subscription status it found (plan), and adds
+      // one to the free allowance used for each new item counted (used),
+      // which never goes down.
       allow update: if (isAdmin(biz)
           && data().code == resource.data.code && data().ownerUid == resource.data.ownerUid
+          && data().get('used', 0) == resource.data.get('used', 0)
           && data().name is string && data().name.size() > 0 && data().name.size() <= 80)
-        || (isActive(biz) && data().diff(resource.data).affectedKeys().hasOnly(['plan']));
+        || (isActive(biz) && data().diff(resource.data).affectedKeys().hasOnly(['plan']))
+        || (isActive(biz) && data().diff(resource.data).affectedKeys().hasOnly(['used'])
+          && data().used == resource.data.get('used', 0) + 1);
       allow delete: if isOwner(biz);
     }
 
