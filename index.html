@@ -725,7 +725,11 @@
     });
   }
 
-  async function planGate(proceed) {
+  // Sign-in and the sign-in listener can both get here: only the latest check opens the app
+  var gateRun = 0;
+  async function planGate(open) {
+    var run = ++gateRun;
+    function proceed() { if (run === gateRun) open(); }
     if (!SC.planNeeded()) return proceed();
     var active = false;
     if (SC.canBuy()) {
@@ -737,6 +741,7 @@
     if (active) return proceed();
     // Still within the free items: in, subscription offered once they're used
     if (!SC.mustSubscribe(await businessInfo(8000))) return proceed();
+    if (run !== gateRun) return;
     showPaywall(proceed);
   }
   // Called when a new item would go past the free allowance
@@ -751,13 +756,17 @@
   var PRIVACY_URL = "https://stock.hatef.cc/privacy.html";
   function openExternal(url) { window.open(url, "_blank"); }
 
+  var paywallRun = 0;
   async function showPaywall(proceed, message, lead) {
     var root = $("#authRoot");
+    var run = ++paywallRun;
     root.dataset.mode = "paywall";
     root.innerHTML = "";
     root.hidden = false;
     document.body.classList.add("signed-out");
     var info = await businessInfo(3000);
+    // Opened again meanwhile: only the latest one is drawn
+    if (run !== paywallRun) return;
     var card = el("div", { class: "auth-card paywall" });
     card.appendChild(el("div", { class: "auth-brand" }, [
       el("div", { class: "glyph", html: '<img src="app-icon.png" alt="">' }),
