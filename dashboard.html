@@ -7,11 +7,11 @@
 <link rel="icon" type="image/png" href="app-icon.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <!-- Installable web app (manifest.webmanifest, sw.js) -->
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="manifest" href="dashboard.webmanifest">
 <meta name="theme-color" content="#EDEFF2">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="H Stock">
+<meta name="apple-mobile-web-app-title" content="H Stock Dashboard">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -2461,7 +2461,7 @@
       biz && !biz.missing ? el("p", {}, [el("span", { text: biz.name + " \u00b7 business code " }), el("b", { class: "mono biz-code", text: biz.code })]) : null,
       biz && !biz.missing && SC.planNeeded() && !SC.planActive(biz) ? el("p", { text: "Free version: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }) : null,
       el("div", { style: "display:flex;flex-direction:column;gap:8px" }, [
-        SC.installMethod() ? item("Install app", function () { installWebApp(SC.installMethod()); }) : null,
+        SC.installMethod() ? item("Install desktop app", function () { installWebApp(SC.installMethod()); }) : null,
         item("Change password", changePassword),
         item("Sign out", async function () { closeModal(); await SC.signOut(); }),
         owner ? item("Delete business", deleteBusiness, "btn-danger") : item("Delete my account", deleteAccount, "btn-danger"),
@@ -2494,14 +2494,14 @@
   function installWebApp(how) {
     closeModal();
     if (how === "prompt") {
-      SC.installApp().then(function (ok) { if (ok) toast("Installed \u2014 open it from your home screen or apps"); });
+      SC.installApp().then(function (ok) { if (ok) toast("Installed \u2014 open it from your Start menu, Dock or desktop"); });
       return;
     }
     formModal({
-      title: "Install the app",
+      title: "Install the desktop app",
       text: how === "ios"
         ? "In Safari, tap the Share button (the square with an arrow) at the bottom of the screen, then Add to Home Screen, then Add. The app then opens from its own icon, full screen."
-        : "Open your browser's menu and choose Install The H Stock Management (Chrome and Edge: the install icon in the address bar, or menu > Install). Safari on a Mac: File > Add to Dock.",
+        : "Open your browser's menu and choose Install The H Stock Management Dashboard (Chrome and Edge: the install icon at the right of the address bar, or menu > Cast, save and share > Install page as app). Safari on a Mac: File > Add to Dock. It then opens in its own window from the Start menu, Dock or desktop.",
       fields: [],
       submitLabel: "OK",
       onSubmit: async function () {}

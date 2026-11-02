@@ -236,8 +236,11 @@ and window, and it opens without signal:
 - In the app: account menu > **Install app** (shows the right steps for the
   browser, or the install prompt where the browser offers one).
 
-`manifest.webmanifest` describes the app (name, icons in `icons/`, colours,
-shortcuts to Scan and Dashboard). `sw.js` keeps a copy of the app's own files
+`manifest.webmanifest` describes the phone app (name, icons in `icons/`,
+colours, shortcuts to Scan and Dashboard); `dashboard.webmanifest` makes the
+desktop dashboard its own app, "The H Stock Management Dashboard", that
+always opens the dashboard in its own window (install it from the dashboard on
+a computer: account menu > **Install desktop app**). `sw.js` keeps a copy of the app's own files
 (network first, so updates arrive straight away when online) and of the
 libraries it loads from CDNs; the database and sign-in are never cached by it
 (Firebase keeps offline counts itself). It only runs on the website, not inside

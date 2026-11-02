@@ -1,0 +1,21 @@
+{
+  "id": "./dashboard",
+  "name": "The H Stock Management Dashboard",
+  "short_name": "H Stock Dashboard",
+  "description": "Live stock-check dashboard: progress, counts, staff, areas and Excel export.",
+  "start_url": "./dashboard.html?source=app",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDEFF2",
+  "theme_color": "#EDEFF2",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Overview", "url": "./dashboard.html?source=app#overview", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Count", "url": "./dashboard.html?source=app#count", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Stock check", "url": "./dashboard.html?source=app#stock", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -10,7 +10,7 @@
 var CACHE = "hstock-app-v1";
 var APP_FILES = [
   "./", "./index.html", "./dashboard.html", "./common.js", "./app-icon.png", "./logo.png",
-  "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"
+  "./manifest.webmanifest", "./dashboard.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"
 ];
 var LIBRARY_HOSTS = ["www.gstatic.com", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];
 
