@@ -829,7 +829,8 @@
     profile = p;
     lsSet(CODE_KEY, code);
     lsSet("sc-biz-" + p.uid, biz);
-    await log("login");
+    // Not waited for: on a weak connection the note could take long to reach the server
+    log("login");
     // Open the app now instead of waiting for the sign-in listener to catch up
     watchProfile(p.uid);
     if (authCb) authCb(p);
@@ -873,7 +874,7 @@
     }
     holdAuth = false;
     profile = await loadProfile(uid);
-    await log("setup");
+    log("setup");
     watchProfile(uid);
     if (authCb) authCb(profile);
     return profile;
@@ -903,7 +904,7 @@
     var email = newEmailFor(username);
     holdAuth = true;
     try {
-      var cred = await auth.createUserWithEmailAndPassword(email, opts.password);
+      var cred = await withTimeout(auth.createUserWithEmailAndPassword(email, opts.password), 20000);
     } catch (e) { holdAuth = false; throw e; }
     var uid = cred.user.uid, now = firebase.firestore.FieldValue.serverTimestamp(), code = null, lastErr = null;
     setBiz(bizId);
@@ -916,8 +917,11 @@
       batch.set(D("users/" + uid), { username: username, name: name, role: "admin", active: true, createdAt: now, createdBy: uid });
       batch.set(D("usernames/" + username), { uid: uid, email: email });
       batch.set(D("meta/setup"), { done: true, by: uid, at: now });
-      try { await batch.commit(); code = c; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
+      try { await withTimeout(batch.commit(), 30000); code = c; } catch (e) { lastErr = e; if (e.code !== "permission-denied") break; }
     }
+    // No answer from the server: the business may still be saved once the
+    // connection is back, so keep the sign-in (opening the app again finds it)
+    if (!code && lastErr && lastErr.code === "timeout") { holdAuth = false; throw lastErr; }
     if (!code) {
       holdAuth = false;
       setBiz("root");
@@ -927,8 +931,10 @@
     holdAuth = false;
     lsSet(CODE_KEY, code);
     lsSet("sc-biz-" + uid, bizId);
-    profile = await loadProfile(uid);
-    await log("setup", { detail: businessName });
+    // What was just saved, if reading it back is slow
+    profile = await withTimeout(loadProfile(uid), 15000).catch(function () { return null; }) ||
+      { uid: uid, username: username, name: name, role: "admin", active: true };
+    log("setup", { detail: businessName });
     watchProfile(uid);
     if (authCb) authCb(profile);
     return { profile: profile, code: code };
