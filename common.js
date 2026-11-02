@@ -19,7 +19,7 @@
   var authCb = null, holdAuth = false, profileUnsub = null;
 
   /* In-app purchase that unlocks a business (RevenueCat: app.revenuecat.com >
-   * Project > API keys). A one-time purchase (non-consumable); a subscription
+   * Project > API keys). A monthly subscription; a one-time (non-consumable)
    * product works too. Paste the public Apple and Google keys. While both are
    * empty, nobody is asked to pay. The first business (the one set up before
    * businesses existed) never needs to. */

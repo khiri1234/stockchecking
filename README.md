@@ -168,40 +168,42 @@ separate: the security rules only let a business's own accounts read it.
   their own account. Staff sign-in accounts stay in Firebase Authentication
   without access.
 
-### The full version (one-time in-app purchase)
+### The full version (monthly in-app subscription)
 
 Each new business counts its first 50 items free (`freeItems` in
 `SUBSCRIPTIONS`; `businesses/{biz}.used` goes up by one for each new item
 counted and the rules only let it go up). After that, counting a new item, or
-opening the app, asks the owner to unlock the **full version**: a one-time
-purchase (AED 10,000) per business, bought once in the iPhone or Android app;
-every staff phone of the business sees it. Purchases go through RevenueCat
+opening the app, asks the owner to subscribe to the **full version**: AED
+4,000 a month per business, bought once in the iPhone or Android app; every
+staff phone of the business sees it. Purchases go through RevenueCat
 (`@revenuecat/purchases-capacitor`), whose customer ID is the business ID.
 The dashboard and web app can't take payments: they read the status the phones
 record on `businesses/{biz}.plan` and show "unlock it in the app" until then.
-(A subscription product also works with the same code: the screen then shows
-the renewal terms and the menu offers **Manage subscription**.)
+(A one-time, non-consumable product also works with the same code: the screen
+then shows one-time small print instead of the renewal terms. Apple's highest
+one-time price in the UAE is about AED 4,000.)
 
 While both keys in `SUBSCRIPTIONS` at the top of `common.js` are empty,
-nobody is asked to pay; fill them in to switch the purchase on. One-time
-setup:
+nobody is asked to pay; fill them in to switch the purchase on. Setup:
 
-1. **App Store Connect** > your app > **Monetization > In-App Purchases** >
-   **+**: type **Non-Consumable**, reference name `Full version`, product ID
-   `hstock_business`. Set the price (AED 10,000), the display name and
-   description (English), and the review screenshot (the purchase screen).
-   Sign the **Paid Apps Agreement** (Business section), and create an
-   **In-App Purchase key** for RevenueCat (Users and Access > Integrations >
-   In-App Purchase). Set the app's own price to **Free**.
-2. **Google Play Console** > your app > **Monetize > Products > In-app
-   products**: create `hstock_business` with the same price (Google may cap
-   the price lower than Apple). Link a Google Cloud service account for
-   RevenueCat (RevenueCat's guide walks through it).
+1. **App Store Connect** > your app > **Monetization > Subscriptions**: create
+   a subscription group (reference name `The H Stock Management`, and an
+   English display name), then a subscription in it: reference name `Monthly`,
+   product ID `hstock_monthly`, duration 1 month, price AED 4,000, English
+   display name and description, and the review screenshot (the purchase
+   screen). No introductory offer: the 50 free items are the trial. Sign the
+   **Paid Apps Agreement** (Business section), create an **In-App Purchase
+   key** for RevenueCat (Users and Access > Integrations > In-App Purchase),
+   and set the app's own price to **Free**.
+2. **Google Play Console** > your app > **Monetize > Subscriptions**: create
+   `hstock_monthly` with a monthly base plan at the same price (Google may cap
+   it lower). Link a Google Cloud service account for RevenueCat (RevenueCat's
+   guide walks through it).
 3. **RevenueCat** (app.revenuecat.com, free to start): create a project, add
    the App Store app (bundle ID `com.khiri1234.stockcheck`, the In-App
    Purchase key) and the Play Store app. Create an **entitlement** with the
-   identifier `full_access`, attach `hstock_business` to it, and put it in the
-   **default offering** as a **Lifetime** package. In Project settings, set
+   identifier `full_access`, attach `hstock_monthly` to it, and put it in the
+   **default offering** as a **Monthly** package. In Project settings, set
    **Restore behavior** to **Keep with original App User ID**, so a purchase
    stays with the business that bought it.
 4. Copy RevenueCat's public **Apple API key** (`appl_...`) and **Google API
@@ -210,11 +212,12 @@ setup:
 5. In Xcode: **App** target > **Signing & Capabilities** > **+ Capability** >
    **In-App Purchase**.
 6. Test with a Sandbox tester (App Store Connect > Users and Access > Sandbox)
-   and a Play licence tester before submitting. Add the in-app purchase to the
+   and a Play licence tester before submitting. Add the subscription to the
    app version when you submit it for review.
 
-A non-consumable can be bought only once per Apple ID or Google account: an
-owner with two businesses needs a different store account for the second one.
+One Apple ID or Google account can hold one subscription in the group at a
+time: an owner with two businesses needs a different store account for the
+second one.
 
 The status the phones record is not checked by a server: a determined user
 could change it for their own business. To make it tamper-proof later, add a
@@ -248,7 +251,7 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its business code, username and password in App Store Connect >
   App Review Information (the notes field takes the code). Also mention that
-  reviewers can create their own business and buy the full version with a sandbox account.
+  reviewers can create their own business and subscribe with a sandbox account.
 - Public listing: App Store Connect > **Pricing and Availability > App
   Distribution Methods > Public**, with the in-app purchase set up as above
 
