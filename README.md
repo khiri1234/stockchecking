@@ -145,7 +145,7 @@ latest 100 counts) and the results with the same two buttons, all under
 The site is hosted on GitHub Pages; `firebase deploy` also works (see
 `firebase.json`).
 
-## Businesses and subscriptions
+## Businesses and the full version
 
 Anyone can install the app and choose **New business? Create one**. They become
 that business's owner and first admin, and get a six-character **business
@@ -155,65 +155,71 @@ separate: the security rules only let a business's own accounts read it.
 
 - **Where data lives.** A new business keeps everything under
   `businesses/{biz}/` (`catalog`, `counts`, `users`, `usernames`, `activity`...).
-  `businesses/{biz}` holds its name, code, owner and subscription status;
+  `businesses/{biz}` holds its name, code, owner and purchase status;
   `codes/{CODE}` maps a code to its business; `members/{uid}` maps a sign-in
   account to its business.
 - **The first business** (set up before businesses existed) keeps its data at
   the top level, unchanged, so copies of the app already installed keep
   working. Its staff can leave the business code empty. An admin can give it a
   code from the dashboard's Staff page or the app's account menu
-  (**Get a business code**). It never needs a subscription.
+  (**Get a business code**). It never needs to buy the full version.
 - **Deleting.** The owner can delete the whole business (account menu >
   **Delete business**): product list, counts, staff records, activity log and
   their own account. Staff sign-in accounts stay in Firebase Authentication
   without access.
 
-### Subscriptions (in-app purchase)
+### The full version (one-time in-app purchase)
 
 Each new business counts its first 50 items free (`freeItems` in
 `SUBSCRIPTIONS`; `businesses/{biz}.used` goes up by one for each new item
 counted and the rules only let it go up). After that, counting a new item, or
-opening the app, asks for the subscription. The owner subscribes once in the
-iPhone or Android app; every staff phone of the business sees it. Purchases go through RevenueCat
+opening the app, asks the owner to unlock the **full version**: a one-time
+purchase (AED 10,000) per business, bought once in the iPhone or Android app;
+every staff phone of the business sees it. Purchases go through RevenueCat
 (`@revenuecat/purchases-capacitor`), whose customer ID is the business ID.
 The dashboard and web app can't take payments: they read the status the phones
-record on `businesses/{biz}.plan` and show "subscribe in the app" until it's
-active.
+record on `businesses/{biz}.plan` and show "unlock it in the app" until then.
+(A subscription product also works with the same code: the screen then shows
+the renewal terms and the menu offers **Manage subscription**.)
 
 While both keys in `SUBSCRIPTIONS` at the top of `common.js` are empty,
-nobody is asked to pay; fill them in to switch subscriptions on. One-time
+nobody is asked to pay; fill them in to switch the purchase on. One-time
 setup:
 
-1. **App Store Connect** > your app > **Subscriptions**: create a subscription
-   group (e.g. "The H Stock Management") with a product such as
-   `hstock_monthly` (and `hstock_yearly` if you like) and set prices. No
-   introductory offer is needed: the 50 free items are the trial. Fill in each product's
-   display name, description and review screenshot (the subscription screen).
+1. **App Store Connect** > your app > **Monetization > In-App Purchases** >
+   **+**: type **Non-Consumable**, reference name `Full version`, product ID
+   `hstock_business`. Set the price (AED 10,000), the display name and
+   description (English), and the review screenshot (the purchase screen).
    Sign the **Paid Apps Agreement** (Business section), and create an
    **In-App Purchase key** for RevenueCat (Users and Access > Integrations >
-   In-App Purchase).
-2. **Google Play Console** > your app > **Monetize > Subscriptions**: create
-   the same product IDs with a base plan each (and a free-trial offer). Link a
-   Google Cloud service account for RevenueCat (RevenueCat's guide walks
-   through it).
+   In-App Purchase). Set the app's own price to **Free**.
+2. **Google Play Console** > your app > **Monetize > Products > In-app
+   products**: create `hstock_business` with the same price (Google may cap
+   the price lower than Apple). Link a Google Cloud service account for
+   RevenueCat (RevenueCat's guide walks through it).
 3. **RevenueCat** (app.revenuecat.com, free to start): create a project, add
    the App Store app (bundle ID `com.khiri1234.stockcheck`, the In-App
    Purchase key) and the Play Store app. Create an **entitlement** with the
-   identifier `full_access`, attach the products to it, and put them in the
-   **default offering** as packages (Monthly / Annual).
+   identifier `full_access`, attach `hstock_business` to it, and put it in the
+   **default offering** as a **Lifetime** package. In Project settings, set
+   **Restore behavior** to **Keep with original App User ID**, so a purchase
+   stays with the business that bought it.
 4. Copy RevenueCat's public **Apple API key** (`appl_...`) and **Google API
    key** (`goog_...`) into `SUBSCRIPTIONS` in `common.js`, then rebuild both
    apps (`npm run ios`, `npm run android`).
 5. In Xcode: **App** target > **Signing & Capabilities** > **+ Capability** >
    **In-App Purchase**.
 6. Test with a Sandbox tester (App Store Connect > Users and Access > Sandbox)
-   and a Play licence tester before submitting. Add the subscription products
-   to the app version when you submit it for review.
+   and a Play licence tester before submitting. Add the in-app purchase to the
+   app version when you submit it for review.
 
-The subscription status the phones record is not checked by a server: a
-determined user could change it for their own business. To make it
-tamper-proof later, add a RevenueCat webhook to a Cloud Function that writes
-`businesses/{biz}.plan` and drop client writes of `plan` from the rules.
+A non-consumable can be bought only once per Apple ID or Google account: an
+owner with two businesses needs a different store account for the second one.
+
+The status the phones record is not checked by a server: a determined user
+could change it for their own business. To make it tamper-proof later, add a
+RevenueCat webhook to a Cloud Function that writes `businesses/{biz}.plan` and
+drop client writes of `plan` from the rules.
 
 ## iPhone app (App Store)
 
@@ -242,9 +248,9 @@ After any change to `index.html`, run `npm run ios` again before archiving.
 - App Review needs a sign-in: create a staff account for Apple on the dashboard
   and put its business code, username and password in App Store Connect >
   App Review Information (the notes field takes the code). Also mention that
-  reviewers can create their own business and subscribe with a sandbox account.
+  reviewers can create their own business and buy the full version with a sandbox account.
 - Public listing: App Store Connect > **Pricing and Availability > App
-  Distribution Methods > Public**, with the subscriptions set up as above
+  Distribution Methods > Public**, with the in-app purchase set up as above
 
 ## Android app
 

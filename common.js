@@ -18,15 +18,16 @@
   var profile = null; // { uid, username, name, role, active }
   var authCb = null, holdAuth = false, profileUnsub = null;
 
-  /* In-app subscriptions (RevenueCat: app.revenuecat.com > Project > API keys).
-   * Paste the public Apple and Google keys. While both are empty, nobody is
-   * asked to subscribe. The first business (the one set up before businesses
-   * existed) never needs a subscription. */
+  /* In-app purchase that unlocks a business (RevenueCat: app.revenuecat.com >
+   * Project > API keys). A one-time purchase (non-consumable); a subscription
+   * product works too. Paste the public Apple and Google keys. While both are
+   * empty, nobody is asked to pay. The first business (the one set up before
+   * businesses existed) never needs to. */
   var SUBSCRIPTIONS = {
     appleApiKey: "",
     googleApiKey: "",
     entitlement: "full_access",
-    // Items a business can count for free before it has to subscribe
+    // Items a business can count for free before it has to buy
     freeItems: 50
   };
 
@@ -150,9 +151,9 @@
       "bad-business-name": "Enter your business name (up to 80 characters).",
       "bad-name": "Enter your name.",
       "cancelled": "Purchase cancelled.",
-      "no-plans": "Subscriptions aren't available right now. Try again later.",
-      "store-unavailable": "Subscriptions can only be bought in the iPhone or Android app.",
-      "free-limit": "Your business has counted its " + SUBSCRIPTIONS.freeItems + " free items. Subscribe to keep counting."
+      "no-plans": "The purchase isn't available right now. Try again later.",
+      "store-unavailable": "The full version can only be bought in the iPhone or Android app.",
+      "free-limit": "Your business has counted its " + SUBSCRIPTIONS.freeItems + " free items. Unlock the full version to keep counting."
     };
     return map[code] || (e && e.message) || "Something went wrong.";
   }
@@ -218,7 +219,7 @@
     area_merged: "Moved counts to an area",
     task_assigned: "Assigned a task",
     task_done: "Finished a task",
-    subscribed: "Started the subscription"
+    subscribed: "Unlocked the full version"
   };
 
   /* ---------------- stock data ----------------

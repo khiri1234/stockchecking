@@ -772,16 +772,20 @@
       return b;
     }
     function afterCheck(plan) {
-      if (plan && plan.active) { toast("Subscription active"); proceed(); }
-      else errorBox.textContent = "No active subscription found.";
+      if (plan && plan.active) { toast("Full version unlocked"); proceed(); }
+      else errorBox.textContent = "No purchase found for this business.";
     }
 
     if (isAdmin() && SC.canBuy()) {
-      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Subscribe to keep using the app with your whole team: unlimited staff, products and stock checks. Staff phones don't need their own subscription." }));
+      card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Unlock the full version for your business: unlimited staff, products and stock checks, for your whole team. Staff phones don't need to buy it." }));
       var plansBox = el("div", { class: "menu-list", text: "Loading plans…" });
       card.appendChild(plansBox);
       SC.getPlans().then(function (plans) {
         plansBox.innerHTML = "";
+        var store = window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID";
+        finePrint.textContent = plans.some(function (p) { return p.period; })
+          ? "Payment is charged to your " + store + " account. A subscription renews automatically unless it's cancelled at least 24 hours before the end of the current period. You can manage or cancel it in your account settings."
+          : "One-time purchase, charged to your " + store + " account. It unlocks the full version for this business, with no subscription. Reinstalled the app or using another phone? Use Restore purchases.";
         plans.forEach(function (plan) {
           var label = plan.title + " — " + plan.price + (plan.period ? " / " + plan.period : "");
           var b = el("button", { type: "button", class: "btn btn-primary btn-block" }, [
@@ -800,8 +804,8 @@
       }).catch(function (e) { plansBox.textContent = ""; errorBox.textContent = SC.friendlyError(e); });
       card.appendChild(errorBox);
       button("Restore purchases", async function () { afterCheck(await SC.restorePlans()); });
-      card.appendChild(el("p", { class: "fine-print", text: "Payment is charged to your " + (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID") +
-        " account. The subscription renews automatically unless it's cancelled at least 24 hours before the end of the current period. You can manage or cancel it in your account settings." }));
+      var finePrint = el("p", { class: "fine-print" });
+      card.appendChild(finePrint);
       var links = el("p", { class: "fine-print" });
       var terms = el("a", { href: TERMS_URL, text: "Terms of Use" }), privacy = el("a", { href: PRIVACY_URL, text: "Privacy Policy" });
       [terms, privacy].forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); openExternal(a.href); }); });
@@ -809,8 +813,8 @@
       card.appendChild(links);
     } else {
       card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + (isAdmin()
-        ? "Your business needs a subscription to keep counting. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and subscribe there."
-        : "Your business needs a subscription to keep counting. Ask your manager to subscribe in the app.") }));
+        ? "Your business needs the full version to keep counting. Open The H Stock Management app on an iPhone or Android phone, sign in as an admin and unlock it there."
+        : "Your business needs the full version to keep counting. Ask your manager to unlock it in the app.") }));
       card.appendChild(errorBox);
       button("Check again", async function () {
         if (SC.canBuy()) return afterCheck(await SC.checkPlan());
@@ -897,7 +901,7 @@
       el("span", { text: biz.name + " · business code " }), el("b", { class: "mono", text: biz.code })
     ]));
     if (biz && !biz.missing && SC.planNeeded() && !SC.planActive(biz)) modal.appendChild(el("p", { class: "biz-line",
-      text: "Free plan: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }));
+      text: "Free version: " + SC.freeLeft(biz) + " of " + SC.FREE_ITEMS + " free items left" }));
     var list = el("div", { class: "menu-list" });
     function item(label, fn, cls) {
       var b = el("button", { type: "button", class: "btn btn-block " + (cls || "btn-secondary"), text: label });
@@ -907,8 +911,9 @@
     if (!SC.isNative()) item("Open desktop dashboard", function () { location.href = "dashboard.html"; });
     if (isAdmin() && biz && biz.missing) item("Get a business code", claimBusinessCode);
     if (isAdmin() && SC.planNeeded() && SC.canBuy()) {
-      if (SC.planActive(biz)) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
-      else item("Subscribe", function () { closeModal(); showPaywall(function () { hideAuthScreen(); }); });
+      // A subscription (it has an end date) can be managed; a one-time purchase has nothing to manage
+      if (SC.planActive(biz) && biz.plan.expiresAt) item("Manage subscription", function () { openExternal(SC.manageSubscriptionsUrl()); });
+      else if (!SC.planActive(biz)) item("Unlock full version", function () { closeModal(); showPaywall(function () { hideAuthScreen(); }); });
     }
     item("Change password", changePassword);
     item("Sign out", async function () { closeModal(); await SC.signOut(); });
@@ -938,8 +943,7 @@
   function deleteBusiness() {
     formModal({
       title: "Delete business",
-      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone. Cancel the subscription separately in your " +
-        (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "App Store") + " account settings. Enter your password to confirm.",
+      text: "This permanently deletes your business: the product list, every count, all staff accounts, the activity log and your own account. It can't be undone, and the full-version purchase isn't refunded. Enter your password to confirm.",
       fields: [{ name: "password", label: "Password", type: "password", autocomplete: "current-password" }],
       submitLabel: "Delete business",
       danger: true,
