@@ -780,6 +780,9 @@
       card.appendChild(el("p", { class: "auth-sub", text: (lead ? lead + " " : "") + "Unlock the full version for your business: unlimited staff, products and stock checks, for your whole team. Staff phones don't need to buy it." }));
       var plansBox = el("div", { class: "menu-list", text: "Loading plans…" });
       card.appendChild(plansBox);
+      var loadPlans = function () {
+      errorBox.textContent = "";
+      plansBox.textContent = "Loading plans…";
       SC.getPlans().then(function (plans) {
         plansBox.innerHTML = "";
         var store = window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "android" ? "Google Play" : "Apple ID";
@@ -801,7 +804,15 @@
           });
           plansBox.appendChild(b);
         });
-      }).catch(function (e) { plansBox.textContent = ""; errorBox.textContent = SC.friendlyError(e); });
+      }).catch(function (e) {
+        plansBox.textContent = "";
+        errorBox.textContent = SC.friendlyError(e);
+        var again = el("button", { type: "button", class: "btn btn-primary btn-block", text: "Try again" });
+        again.addEventListener("click", loadPlans);
+        plansBox.appendChild(again);
+      });
+      };
+      loadPlans();
       card.appendChild(errorBox);
       button("Restore purchases", async function () { afterCheck(await SC.restorePlans()); });
       var finePrint = el("p", { class: "fine-print" });

@@ -151,7 +151,7 @@
       "bad-business-name": "Enter your business name (up to 80 characters).",
       "bad-name": "Enter your name.",
       "cancelled": "Purchase cancelled.",
-      "no-plans": "The purchase isn't available right now. Try again later.",
+      "no-plans": "The subscription isn't available from the App Store yet. In App Store Connect it must be Ready to Submit (with its review screenshot); then try again in a few minutes.",
       "store-unavailable": "The full version can only be bought in the iPhone or Android app.",
       "free-limit": "Your business has counted its " + SUBSCRIPTIONS.freeItems + " free items. Unlock the full version to keep counting."
     };
@@ -1018,17 +1018,30 @@
     return platform === "ios" ? SUBSCRIPTIONS.appleApiKey : platform === "android" ? SUBSCRIPTIONS.googleApiKey : "";
   }
   function canBuy() { return !!(storePlugin() && storeKey()); }
+  // Set up once per app start; a slow store answers "timeout" instead of
+  // leaving the screen waiting, and the next try waits for the same setup
+  var storeSetup = null;
   async function storeReady() {
     var plugin = storePlugin();
     if (!plugin || !storeKey()) throw err("store-unavailable");
-    if (!store) {
-      await plugin.configure({ apiKey: storeKey(), appUserID: biz });
-      store = plugin; storeUser = biz;
-    } else if (storeUser !== biz) {
-      await store.logIn({ appUserID: biz });
+    if (!storeSetup) {
+      var user = biz;
+      storeSetup = plugin.configure({ apiKey: storeKey(), appUserID: user })
+        .then(function () { store = plugin; storeUser = user; })
+        .catch(function (e) { storeSetup = null; throw e; });
+    }
+    await withTimeout(storeSetup, 15000);
+    if (storeUser !== biz) {
+      await withTimeout(store.logIn({ appUserID: biz }), 15000);
       storeUser = biz;
     }
     return store;
+  }
+  // RevenueCat's "none of the products could be fetched from the store" and
+  // similar set-up problems: the subscription isn't available from Apple yet
+  function storeSetupProblem(e) {
+    var code = String((e && (e.code || (e.data && e.data.code))) || "");
+    return code === "23" || /could not be fetched|could be fetched|configuration|no products|offerings/i.test(String((e && e.message) || ""));
   }
   function planFrom(customerInfo) {
     var active = customerInfo && customerInfo.entitlements && customerInfo.entitlements.active;
@@ -1053,7 +1066,9 @@
   // -> [{ id, title, price, period, trial, pkg }] for the paywall
   async function getPlans() {
     var s = await storeReady();
-    var offerings = await withTimeout(s.getOfferings(), 20000);
+    var offerings;
+    try { offerings = await withTimeout(s.getOfferings(), 20000); }
+    catch (e) { console.warn("offerings failed", e); throw storeSetupProblem(e) ? err("no-plans") : e; }
     var cur = offerings && offerings.current;
     var pkgs = (cur && cur.availablePackages) || [];
     if (!pkgs.length) throw err("no-plans");
